@@ -236,7 +236,11 @@ export function byteSize(ds) {
   if (ds.lengths) b += ds.lengths.byteLength;
   if (ds.groups) b += ds.groups.byteLength;
   if (ds.wave) {
-    for (const w of ds.wave) if (w && w.clean) b += (w.clean.byteLength + w.noisy.byteLength);
+    for (const w of ds.wave) {
+      if (!w) continue;
+      if (w.clean) b += w.clean.byteLength;
+      if (w.noisy) b += w.noisy.byteLength;
+    }
   }
   if (ds.images) {
     for (const im of ds.images) if (im && im.image) b += im.image.byteLength;

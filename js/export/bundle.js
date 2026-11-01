@@ -222,7 +222,7 @@ export function verifyBundle(bytes) {
       result.problems.push('size mismatch for ' + declared.path + ': ' + found.bytes + ' vs ' + declared.bytes);
     }
   }
-  if (!zipVerify(bytes)) {
+  if (!zipVerify(bytes).ok) {
     result.ok = false;
     result.problems.push('zip central directory failed verification');
   }

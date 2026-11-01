@@ -1,4 +1,5 @@
 import { crc32 } from './hash.js';
+import { inflateRaw } from './inflate.js';
 
 const LOCAL_SIG = 0x04034b50;
 const CENTRAL_SIG = 0x02014b50;
@@ -146,8 +147,15 @@ export function zipRead(bytes) {
     const lNameLen = view.getUint16(localOffset + 26, true);
     const lExtraLen = view.getUint16(localOffset + 28, true);
     const start = localOffset + 30 + lNameLen + lExtraLen;
-    if (method !== 0) throw new Error('unsupported compression method ' + method + ' in ' + name);
-    const payload = data.slice(start, start + uncompSize);
+    let payload;
+    if (method === 0) {
+      payload = data.slice(start, start + uncompSize);
+    } else if (method === 8) {
+      payload = inflateRaw(data, { offset: start, expectedSize: uncompSize });
+      if (payload.length !== uncompSize) throw new Error('deflate entry ' + name + ' expanded to ' + payload.length + ' bytes, expected ' + uncompSize);
+    } else {
+      throw new Error('unsupported compression method ' + method + ' in ' + name);
+    }
     const actual = payload.length ? crc32(payload) >>> 0 : 0;
     out.push({ name, data: payload, crc, size: uncompSize, compSize, crcOk: actual === crc });
   }
