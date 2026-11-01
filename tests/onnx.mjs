@@ -253,11 +253,110 @@ for (const [type, inShape, cfg] of LAYER_CASES) {
   }
 }
 
+function inspectGraph(bytes) {
+  const model = parseMessage(bytes);
+  const graph = parseMessage(first(model, F.model.graph));
+  const nodes = (graph[F.graph.node] || []).map((e) => readNode(e.value));
+  const inits = (graph[F.graph.initializer] || []).map((e) => readInitializer(e.value));
+  const inputs = (graph[F.graph.input] || []).map((e) => readValueInfo(e.value));
+  const outputs = (graph[F.graph.output] || []).map((e) => readValueInfo(e.value));
+  const byName = {};
+  for (const i of inits) byName[i.name] = i;
+  return { nodes, inits, inputs, outputs, byName };
+}
+
+function checkPrecision(key, bytes, precision, expectedOut) {
+  checkModel(key + ':' + precision, bytes, expectedOut);
+  const g = inspectGraph(bytes);
+  if (precision === 'fp16') {
+    if (g.inputs[0].elemType !== ONNX_DTYPE.float16) throw new Error('fp16 graph input elemType ' + g.inputs[0].elemType);
+    if (g.outputs[0].elemType !== ONNX_DTYPE.float16) throw new Error('fp16 graph output elemType ' + g.outputs[0].elemType);
+    let halfCount = 0;
+    for (const init of g.inits) {
+      let elements = 1;
+      for (const d of init.dims) elements *= d;
+      if (init.dtype === ONNX_DTYPE.float16) halfCount++;
+      else if (init.dtype !== ONNX_DTYPE.int64 && init.dtype !== ONNX_DTYPE.float32) throw new Error('unexpected dtype ' + init.dtype + ' for ' + init.name);
+      else if (init.dtype === ONNX_DTYPE.float32 && elements >= 64) throw new Error('large tensor ' + init.name + ' was left as float32 in an fp16 export');
+    }
+    if (!halfCount) throw new Error('no float16 initializers');
+    for (const n of g.nodes) {
+      if (n.op !== 'Resize') continue;
+      for (const name of [n.inputs[1], n.inputs[2]]) {
+        if (!name) continue;
+        const init = g.byName[name];
+        if (init && init.dtype !== ONNX_DTYPE.float32) throw new Error('Resize ' + n.name + ' tensor ' + name + ' must stay float32, got dtype ' + init.dtype);
+      }
+    }
+    return { inits: g.inits.length, half: halfCount };
+  }
+  if (precision === 'int8' || precision === 'uint8') {
+    const wantQ = precision === 'int8' ? ONNX_DTYPE.int8 : ONNX_DTYPE.uint8;
+    if (g.inputs[0].elemType !== ONNX_DTYPE.float32) throw new Error(precision + ' graph must keep a float32 input, got ' + g.inputs[0].elemType);
+    if (g.outputs[0].elemType !== ONNX_DTYPE.float32) throw new Error(precision + ' graph must keep a float32 output, got ' + g.outputs[0].elemType);
+    const dequant = g.nodes.filter((n) => n.op === 'DequantizeLinear');
+    if (!dequant.length) throw new Error('no DequantizeLinear nodes in an integer export');
+    for (const n of dequant) {
+      if (n.inputs.length !== 3) throw new Error('DequantizeLinear ' + n.name + ' needs x, scale and zero_point');
+      const q = g.byName[n.inputs[0]];
+      const scale = g.byName[n.inputs[1]];
+      const zp = g.byName[n.inputs[2]];
+      if (!q || !scale || !zp) throw new Error('DequantizeLinear ' + n.name + ' reads a non-constant tensor');
+      if (q.dtype !== wantQ) throw new Error('DequantizeLinear ' + n.name + ' data dtype ' + q.dtype + ' expected ' + wantQ);
+      if (scale.dtype !== ONNX_DTYPE.float32) throw new Error('DequantizeLinear ' + n.name + ' scale must be float32, got ' + scale.dtype);
+      if (zp.dtype !== wantQ) throw new Error('DequantizeLinear ' + n.name + ' zero_point dtype ' + zp.dtype + ' expected ' + wantQ);
+      const perAxis = scale.dims.length === 1;
+      if (perAxis) {
+        if (n.attrs.axis === undefined) throw new Error('per-axis DequantizeLinear ' + n.name + ' has no axis attribute');
+        if (scale.dims[0] !== q.dims[n.attrs.axis]) throw new Error('DequantizeLinear ' + n.name + ' has ' + scale.dims[0] + ' scales for axis dim ' + q.dims[n.attrs.axis]);
+        if (zp.dims[0] !== scale.dims[0]) throw new Error('DequantizeLinear ' + n.name + ' zero_point count does not match scale count');
+      } else if (n.attrs.axis !== undefined) {
+        throw new Error('per-tensor DequantizeLinear ' + n.name + ' must not set axis');
+      }
+      if (q.dims.reduce((a, b) => a * b, 1) < 64) throw new Error('DequantizeLinear ' + n.name + ' quantizes a tensor smaller than the 64 element floor');
+    }
+    const consumed = new Set();
+    for (const n of dequant) for (const out of n.outputs) consumed.add(out);
+    for (const init of g.inits) {
+      if (consumed.has(init.name)) throw new Error('tensor ' + init.name + ' is both an initializer and a DequantizeLinear output');
+    }
+    return { inits: g.inits.length, dequant: dequant.length };
+  }
+  return { inits: g.inits.length };
+}
+
+const PRECISION_PRESETS = ['langid', 'saliency', 'wake'];
+let precisionChecked = 0;
+for (const preset of PRESET_MODEL_LIST) {
+  if (PRECISION_PRESETS.indexOf(preset.key) < 0) continue;
+  const spec = buildPresetGraph(preset);
+  const info = analyze(spec);
+  const model = new Model(spec);
+  model.build(31337);
+  model.syncStates();
+  for (const precision of ['fp32', 'fp16', 'int8', 'uint8']) {
+    let result;
+    try {
+      result = exportOnnx(model, { precision, head: 'linear' });
+    } catch (e) {
+      problems.push([preset.key + ':' + precision, 'export threw: ' + e.message]);
+      continue;
+    }
+    try {
+      const summary = checkPrecision(preset.key, result.bytes, precision, info.outputShape);
+      precisionChecked++;
+      console.log('precision ' + (preset.key + ':' + precision).padEnd(20) + ' bytes ' + String(result.bytes.length).padStart(7) + '  inits ' + String(summary.inits).padStart(3) + (summary.dequant ? '  dequant ' + summary.dequant : '') + (summary.half ? '  fp16 tensors ' + summary.half : ''));
+    } catch (e) {
+      problems.push([preset.key + ':' + precision, e.message]);
+    }
+  }
+}
+
 const uncovered = Object.keys(LAYERS).filter((k) => k !== 'input' && !coveredTypes.has(k));
 
 console.log('');
 console.log('layer cases checked ' + layerChecked + ' / ' + LAYER_CASES.length + '   layer types with no case: ' + (uncovered.length ? uncovered.join(', ') : 'none'));
-console.log('presets checked ' + checked + ' / ' + PRESET_MODEL_LIST.length + '   onnx nodes emitted ' + totalNodes);
+console.log('presets checked ' + checked + ' / ' + PRESET_MODEL_LIST.length + '   precision variants checked ' + precisionChecked + '   onnx nodes emitted ' + totalNodes);
 console.log('op histogram ' + Object.keys(opCounts).sort().map((k) => k + ':' + opCounts[k]).join(' '));
 if (problems.length) {
   console.log('');

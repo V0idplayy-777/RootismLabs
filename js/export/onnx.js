@@ -1,7 +1,7 @@
 import { ProtoWriter, ONNX_FIELDS as F, ONNX_DTYPE, ONNX_ATTR as AT } from '../core/protobuf.js';
 import { analyze } from '../core/model.js';
 import { defaultConfig } from '../core/layers.js';
-import { toFloat16Array, toBFloat16Array, precisionByKey } from '../core/quant.js';
+import { toFloat16Array, toBFloat16Array, precisionByKey, quantizeInt8 } from '../core/quant.js';
 
 export const DEFAULT_OPSET = 20;
 export const IR_VERSION = 10;
@@ -75,6 +75,14 @@ export class OnnxBuilder {
       return name;
     }
     this.addInitializer(name, shape, ONNX_DTYPE.float32, new Uint8Array(data.buffer, data.byteOffset, data.byteLength), data);
+    return name;
+  }
+
+  constFloat32Strict(values, dims, prefix) {
+    const data = values instanceof Float32Array ? values : Float32Array.from(values);
+    const shape = dims && dims.length ? dims.slice() : [data.length];
+    const name = this.tmp(prefix || 'cf');
+    this.addInitializer(name, shape, ONNX_DTYPE.float32, new Uint8Array(data.buffer, data.byteOffset, data.byteLength), null);
     return name;
   }
 
@@ -327,12 +335,10 @@ export function buildOnnxGraph(model, options) {
   if (!info.valid) throw new Error('graph is not valid: ' + (info.errors[0] && (info.errors[0].message || JSON.stringify(info.errors[0]))));
 
   const precision = precisionByKey(opts.precision || 'fp32');
-  if (precision.key !== 'fp32' && precision.key !== 'fp16') {
-    throw new Error('ONNX export supports float32 and float16 weights. Integer precision is available from the safetensors and TensorFlow.js exports.');
-  }
+  const integerWeights = precision.key === 'int8' || precision.key === 'uint8';
   const b = new OnnxBuilder({ opset: int(opts.opset, DEFAULT_OPSET) });
-  b.weightDtype = precision.onnxDtype;
-  b.elemType = precision.onnxDtype;
+  b.weightDtype = integerWeights ? ONNX_DTYPE.float32 : precision.onnxDtype;
+  b.elemType = integerWeights ? ONNX_DTYPE.float32 : precision.onnxDtype;
 
   const weightList = model.weights();
   const W = {};
@@ -632,14 +638,16 @@ export function buildOnnxGraph(model, options) {
       case 'upsample2d': {
         const factor = int(cfg.factor, 2);
         const mode = cfg.mode === 'bilinear' ? 'linear' : 'nearest';
-        const roi = b.constFloat32([], [0], id + '_roi');
-        const scales = b.constFloat32([1, 1, factor, factor], [4], id + '_scales');
-        const attrs = [
-          attrString('mode', mode),
-          attrString('coordinate_transformation_mode', 'asymmetric')
-        ];
-        if (mode === 'nearest') attrs.push(attrString('nearest_mode', 'floor'));
-        else attrs.push(attrInt('exclude_outside', 0));
+        const roi = b.constFloat32Strict([], [0], id + '_roi');
+        const scales = b.constFloat32Strict([1, 1, factor, factor], [4], id + '_scales');
+        const attrs = [attrString('mode', mode)];
+        if (mode === 'nearest') {
+          attrs.push(attrString('coordinate_transformation_mode', 'asymmetric'));
+          attrs.push(attrString('nearest_mode', 'floor'));
+        } else {
+          attrs.push(attrString('coordinate_transformation_mode', 'pytorch_half_pixel'));
+          attrs.push(attrInt('exclude_outside', 0));
+        }
         return b.node('Resize', [x, roi, scales], [b.tmp('resize')], attrs, id + '_resize');
       }
       case 'pad2d': {
@@ -741,11 +749,17 @@ export function buildOnnxGraph(model, options) {
   b.declareOutput(outputName, outShape.length ? outShape : [1], b.elemType);
   if (outputValue !== outputName) b.node('Identity', [outputValue], [outputName], [], 'graph_output');
 
+  let quantization = null;
+  if (integerWeights) {
+    quantization = quantizeBuilderWeights(b, precision.key, notes);
+  }
+
   return {
     builder: b,
     info,
     unsupported,
     notes,
+    quantization,
     head: headApplied.applied,
     headKind: head || 'linear',
     inputName,
@@ -754,6 +768,85 @@ export function buildOnnxGraph(model, options) {
     opset: b.opset,
     precision: precision.key
   };
+}
+
+const QDQ_MIN_ELEMENTS = 64;
+
+export function quantizeBuilderWeights(builder, precisionKey, notes) {
+  const signed = precisionKey !== 'uint8';
+  const kept = [];
+  const dequantNodes = [];
+  const report = {
+    precision: precisionKey,
+    scheme: signed ? 'int8 symmetric per output channel' : 'uint8 asymmetric per output channel',
+    tensorsQuantized: 0,
+    tensorsKept: 0,
+    originalBytes: 0,
+    quantizedBytes: 0,
+    worstRelativeL2: 0,
+    worstTensor: null,
+    perTensor: []
+  };
+  for (const init of builder.initializers) {
+    const isFloat = init.dtype === ONNX_DTYPE.float32 && init.floatValues && init.floatValues.length;
+    if (!isFloat || init.floatValues.length < QDQ_MIN_ELEMENTS) {
+      kept.push(init);
+      if (isFloat) report.tensorsKept++;
+      continue;
+    }
+    const values = init.floatValues;
+    const dims = init.dims && init.dims.length ? init.dims.slice() : [values.length];
+    const perChannel = dims.length >= 2;
+    const quant = quantizeInt8(values, { shape: dims, axis: 0, signed, perChannel });
+    const dataBytes = new Uint8Array(quant.data.buffer, quant.data.byteOffset, quant.data.byteLength);
+    const scaleValues = Float32Array.from(quant.scales);
+    const scaleBytes = new Uint8Array(scaleValues.buffer, scaleValues.byteOffset, scaleValues.byteLength);
+    const zpValues = signed ? Int8Array.from(quant.zeroPoints) : Uint8Array.from(quant.zeroPoints);
+    const zpBytes = new Uint8Array(zpValues.buffer, zpValues.byteOffset, zpValues.byteLength);
+    const qName = init.name + '_q';
+    const scaleName = init.name + '_scale';
+    const zpName = init.name + '_zero_point';
+    const scaleDims = perChannel ? [scaleValues.length] : [];
+    kept.push({ name: qName, dims: dims.slice(), dtype: signed ? ONNX_DTYPE.int8 : ONNX_DTYPE.uint8, bytes: dataBytes, floatValues: null });
+    kept.push({ name: scaleName, dims: scaleDims, dtype: ONNX_DTYPE.float32, bytes: scaleBytes, floatValues: null });
+    kept.push({ name: zpName, dims: scaleDims, dtype: signed ? ONNX_DTYPE.int8 : ONNX_DTYPE.uint8, bytes: zpBytes, floatValues: null });
+    const attrs = perChannel ? [attrInt('axis', 0)] : [];
+    builder.nodes.unshift({
+      opType: 'DequantizeLinear',
+      inputs: [qName, scaleName, zpName],
+      outputs: [init.name],
+      attrs,
+      name: init.name + '_dequant',
+      domain: ''
+    });
+    dequantNodes.push(init.name + '_dequant');
+    const originalBytes = values.length * 4;
+    const quantizedBytes = dataBytes.length + scaleBytes.length + zpBytes.length;
+    let sumSq = 0;
+    let refSq = 0;
+    for (let i = 0; i < values.length; i++) {
+      const d = quant.restored ? quant.restored[i] - values[i] : 0;
+      sumSq += d * d;
+      refSq += values[i] * values[i];
+    }
+    const relativeL2 = refSq > 0 ? Math.sqrt(sumSq) / Math.sqrt(refSq) : 0;
+    report.tensorsQuantized++;
+    report.originalBytes += originalBytes;
+    report.quantizedBytes += quantizedBytes;
+    if (relativeL2 > report.worstRelativeL2) {
+      report.worstRelativeL2 = relativeL2;
+      report.worstTensor = init.name;
+    }
+    report.perTensor.push({ name: init.name, shape: dims, elements: values.length, perChannel, relativeL2, originalBytes, quantizedBytes });
+  }
+  builder.initializers = kept;
+  report.compressionRatio = report.quantizedBytes ? report.originalBytes / report.quantizedBytes : 1;
+  report.sizeSaved = report.originalBytes - report.quantizedBytes;
+  report.dequantNodes = dequantNodes.length;
+  if (report.tensorsQuantized) {
+    notes.push('Integer export stores ' + report.tensorsQuantized + ' weight tensor' + (report.tensorsQuantized === 1 ? '' : 's') + ' as ' + precisionKey + ' with a DequantizeLinear per tensor (' + report.scheme + '). Tensors under ' + QDQ_MIN_ELEMENTS + ' elements stay float32 because their scales would cost more than they save. The graph still executes in float32, so activations are unchanged.');
+  }
+  return report;
 }
 
 function applyHead(b, value, head, notes) {

@@ -1,4 +1,4 @@
-import { toFloat16Array, toBFloat16Array, fromFloat16Array, fromBFloat16Array } from '../core/quant.js';
+import { toFloat16Array, toBFloat16Array, fromFloat16Array, fromBFloat16Array, quantizeNamedTensors } from '../core/quant.js';
 
 const DTYPE_BYTES = { F64: 8, F32: 4, F16: 2, BF16: 2, I64: 8, I32: 4, I16: 2, I8: 1, U8: 1, BOOL: 1 };
 
@@ -183,21 +183,85 @@ export function readSafetensors(bytes) {
   return { tensors, metadata: header.__metadata__ || null, headerBytes: headerLen, dataBytes: data.length - base };
 }
 
+export function normalizeStates(states, options) {
+  const opts = options || {};
+  if (Array.isArray(states)) {
+    return states.map((s) => ({
+      name: s.name,
+      values: s.values || s.data || s.v,
+      shape: s.shape && s.shape.length ? s.shape.slice() : null
+    })).filter((s) => s.values && s.values.length !== undefined);
+  }
+  const names = opts.names || Object.keys(states);
+  const out = [];
+  for (const name of names) {
+    const node = states[name];
+    if (!node) continue;
+    const values = node.values || node.data || node.v || node;
+    if (!values || values.length === undefined) continue;
+    out.push({ name, values, shape: node.shape && node.shape.length ? node.shape.slice() : null });
+  }
+  return out;
+}
+
 export function safetensorsFromStates(states, options) {
   const opts = options || {};
   const precision = opts.precision || 'fp32';
   const map = { fp32: 'float32', fp16: 'float16', bf16: 'bfloat16', int8: 'int8', uint8: 'uint8' };
   const dtype = map[precision] || 'float32';
   const tensors = [];
-  const names = opts.names || Object.keys(states);
-  for (const name of names) {
-    const node = states[name];
-    const values = node && node.v ? node.v : node;
-    if (!values || values.length === undefined) continue;
-    const shape = node && node.shape ? node.shape.slice() : [values.length];
-    tensors.push({ name: name.replace(/\./g, '__'), values: values instanceof Float32Array ? values : Float32Array.from(values), shape, originalName: name });
+  for (const entry of normalizeStates(states, opts)) {
+    const values = entry.values;
+    const shape = entry.shape || [values.length];
+    tensors.push({
+      name: String(entry.name).replace(/\./g, '__'),
+      values: values instanceof Float32Array ? values : Float32Array.from(values),
+      shape,
+      originalName: entry.name,
+      dtype
+    });
   }
-  return { tensors, dtype };
+  if (precision === 'int8' || precision === 'uint8') {
+    const quantized = quantizeNamedTensors(tensors, precision, opts.quant || {});
+    const expanded = [];
+    for (const t of quantized.tensors) {
+      const source = tensors.find((x) => x.name === t.name);
+      expanded.push({
+        name: t.name,
+        values: t.data,
+        shape: t.shape.slice(),
+        dtype: t.dtype,
+        originalName: source ? source.originalName : t.name,
+        quantized: true,
+        perChannel: !!t.perChannel,
+        channelAxis: t.channelAxis
+      });
+      const scales = t.scales || [t.scale];
+      expanded.push({ name: t.name + '__scale', values: Float32Array.from(scales), shape: [scales.length], dtype: 'float32', originalName: (source ? source.originalName : t.name) + '.scale' });
+      const zeros = t.zeroPoints || [t.zeroPoint];
+      let anyZero = false;
+      for (const z of zeros) if (z) anyZero = true;
+      if (anyZero) expanded.push({ name: t.name + '__zero_point', values: Float32Array.from(zeros), shape: [zeros.length], dtype: 'float32', originalName: (source ? source.originalName : t.name) + '.zero_point' });
+    }
+    return { tensors: expanded, dtype: precision, precision, report: quantized.report, quantization: { scheme: precision === 'int8' ? 'symmetric per-output-channel, scale = maxAbs / 127' : 'asymmetric per-output-channel, 255 levels', scaleSuffix: '__scale', zeroPointSuffix: '__zero_point' } };
+  }
+  return { tensors, dtype, precision, report: null };
+}
+
+export function safetensorsExport(states, options) {
+  const opts = options || {};
+  const prepared = safetensorsFromStates(states, opts);
+  const written = writeSafetensors(prepared.tensors, opts.metadata || null);
+  return {
+    bytes: written.bytes,
+    header: written.header,
+    tensorCount: prepared.tensors.length,
+    dtype: prepared.dtype,
+    precision: prepared.precision,
+    report: prepared.report,
+    quantization: prepared.quantization || null,
+    bytesTotal: written.totalBytes
+  };
 }
 
 export function safetensorsLayout(tensors) {
