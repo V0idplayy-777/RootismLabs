@@ -81,7 +81,7 @@ export function createDataPanel(ctx) {
         el('div', {}, [
           el('h2', { text: isPreset ? 'Dataset presets' : 'Synthetic generators' }),
           el('div', { class: 'small dim', text: isPreset
-            ? list.length + ' ready-made datasets. Each one is generated in your browser from a fixed seed, so a run is reproducible without shipping the data. The license shown is for the generated samples and for the real-world corpus they stand in for.'
+            ? list.length + ' synthetic datasets generated in your browser for development, not real-world validation. Import representative, appropriately licensed data to train and evaluate for deployment. References are not included.'
             : list.length + ' generators with their own knobs. Presets are thin wrappers over these.' })
         ]),
         el('div', { class: 'row' }, [
@@ -154,6 +154,7 @@ export function createDataPanel(ctx) {
     const licenseInfo = datasetLicense(preset.key);
     const bodyNodes = [
       el('p', { text: preset.tagline }),
+      el('div', { class: 'callout warn', text: 'Synthetic samples only. Success on this dataset does not demonstrate commercial or real-world performance.' }),
       preset.notes ? el('div', { class: 'callout', text: preset.notes }) : null,
       el('div', { class: 'config-grid mt8' }, [
         el('label', { class: 'field' }, [
@@ -253,7 +254,7 @@ export function createDataPanel(ctx) {
         el('div', { class: 'tiny mt4', text: reference.license ? reference.license.name + ' — commercial use ' + (reference.license.allowsCommercial ? 'allowed' : 'NOT allowed') : 'license varies' }),
         reference.note ? el('div', { class: 'tiny faint mt4', text: reference.note }) : null
       ]) : null,
-      el('div', { class: 'tiny faint mt8', text: 'Generated samples carry a CC0-style local license: nothing third-party is embedded, so the samples and models trained on them are yours.' })
+      el('div', { class: 'tiny faint mt8', text: 'Generated samples are created locally. Verify the rights and obligations applicable to your intended use.' })
     ], [
       el('button', { class: 'ghost', text: 'Cancel', onclick: () => handle.close() }),
       el('button', {
@@ -335,7 +336,7 @@ export function createDataPanel(ctx) {
         el('div', { class: 'panel-body tight' }, [
           el('div', { class: 'row gap6 wrap mb8' }, [
             el('span', { class: 'badge ' + (data.license && data.license.allowsCommercial ? 'green' : 'red'), text: data.license ? data.license.name : 'unset' }),
-            el('span', { class: 'tiny faint', text: data.license && data.license.allowsCommercial ? 'commercial use allowed' : 'commercial use NOT cleared' })
+            el('span', { class: 'tiny faint', text: data.license && data.license.allowsCommercial ? 'commercial use marked allowed (not independently verified)' : 'commercial use NOT cleared' })
           ]),
           data.license && data.license.notes ? el('div', { class: 'tiny dim', text: data.license.notes }) : null,
           reference ? el('div', { class: 'callout warn mt8' }, [

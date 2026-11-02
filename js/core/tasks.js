@@ -158,20 +158,7 @@ export const TASKS = {
       const logits = model.forward(x, mode, rng);
       const y = labelInts(ds, idx);
       const k = logits.shape[logits.shape.length - 1];
-      if (cfg.loss === 'focal') {
-        const probs = softmaxProbs(logits, k);
-        const gamma = cfg.focalGamma === undefined ? 2 : cfg.focalGamma;
-        const focus = new Float32Array(logits.d.length);
-        for (let i = 0; i < y.length; i++) {
-          for (let c = 0; c < k; c++) {
-            const pt = probs[i * k + c];
-            focus[i * k + c] = c === y[i] ? Math.pow(1 - pt, gamma) : Math.pow(pt, gamma) * 0;
-          }
-        }
-        const mask = new Node(focus, logits.shape);
-        const ce = A.softmaxCrossEntropy(logits, y, { weights: cfg.classWeights, labelSmoothing: cfg.labelSmoothing || 0, reduction: 'none' });
-        return A.meanAll(A.mul(ce, mask));
-      }
+      if (cfg.loss === 'focal') return A.focalSoftmaxCrossEntropy(logits, y, { gamma: cfg.focalGamma, weights: cfg.classWeights, labelSmoothing: cfg.labelSmoothing || 0 });
       return A.softmaxCrossEntropy(logits, y, { weights: cfg.classWeights, labelSmoothing: cfg.labelSmoothing || 0 });
     },
     predict(model, ds, idx) {
@@ -224,6 +211,8 @@ export const TASKS = {
       return {
         scalars: {
           accuracy: acc,
+          accuracy_ci_lower: M.wilsonInterval(acc * idx.length, idx.length).lower,
+          accuracy_ci_upper: M.wilsonInterval(acc * idx.length, idx.length).upper,
           macro_f1: rep.macroF1,
           weighted_f1: rep.weightedF1,
           macro_precision: rep.macroPrecision,
@@ -254,15 +243,7 @@ export const TASKS = {
       const out = model.forward(x, mode, rng);
       const y = flatTargets(ds, idx);
       const t = new Node(y, out.shape.length > 1 ? out.shape : [y.length]);
-      if (cfg.loss === 'focal_bce') {
-        const gamma = cfg.focalGamma === undefined ? 2 : cfg.focalGamma;
-        const p = sigmoidArr(out);
-        const w = new Float32Array(p.length);
-        for (let i = 0; i < p.length; i++) {
-          w[i] = y[i] > 0.5 ? Math.pow(1 - p[i], gamma) : Math.pow(p[i], gamma);
-        }
-        return A.sigmoidBinaryCrossEntropy(out, t, { weights: w });
-      }
+      if (cfg.loss === 'focal_bce') return A.focalBinaryCrossEntropy(out, t, { gamma: cfg.focalGamma, posWeight: cfg.posWeight });
       return A.sigmoidBinaryCrossEntropy(out, t, { posWeight: cfg.posWeight || 1 });
     },
     predict(model, ds, idx) {
@@ -282,7 +263,7 @@ export const TASKS = {
       for (let i = 0; i < idx.length; i++) y[i] = ds.y[idx[i]];
       const roc = M.rocCurve(scores, y);
       const pr = M.prCurve(scores, y);
-      const best = M.bestF1Threshold(scores, y);
+      const best = { threshold: cfg && Number.isFinite(cfg.decisionThreshold) ? cfg.decisionThreshold : 0.5 };
       const rep = M.binaryReport(scores, y, best.threshold);
       const cal = M.calibration(scores, y, 10);
       const sweep = M.thresholdSweep(scores, y, 21);
@@ -301,6 +282,8 @@ export const TASKS = {
           far: rep.far,
           frr: rep.frr,
           accuracy: rep.accuracy,
+          accuracy_ci_lower: M.wilsonInterval(rep.tp + rep.tn, idx.length).lower,
+          accuracy_ci_upper: M.wilsonInterval(rep.tp + rep.tn, idx.length).upper,
           mcc: rep.mcc,
           ece: cal.ece,
           brier: cal.brier,
@@ -361,7 +344,7 @@ export const TASKS = {
           sc[i] = probs[i * k + c];
           lc[i] = y[i * k + c];
         }
-        const best = M.bestF1Threshold(sc, lc);
+        const best = { threshold: cfg && Number.isFinite(cfg.decisionThreshold) ? cfg.decisionThreshold : 0.5 };
         const rep = M.binaryReport(sc, lc, best.threshold);
         const auc = lc.some((v) => v > 0.5) && lc.some((v) => v < 0.5) ? M.rocCurve(sc, lc).auc : 0;
         rows.push({ label: ds.labels ? ds.labels[c] : String(c), index: c, precision: rep.precision, recall: rep.recall, f1: rep.f1, support: Array.from(lc).filter((v) => v > 0.5).length, threshold: best.threshold, auc });
@@ -773,13 +756,7 @@ export const TASKS = {
       }
       const t = new Node(y, [idx.length * T]);
       const flat = A.reshape(out, [idx.length * T, 1]);
-      if (cfg.loss === 'focal_bce') {
-        const gamma = cfg.focalGamma === undefined ? 2 : cfg.focalGamma;
-        const p = sigmoidArr(flat);
-        const w = new Float32Array(p.length);
-        for (let i = 0; i < p.length; i++) w[i] = y[i] > 0.5 ? Math.pow(1 - p[i], gamma) : Math.pow(p[i], gamma);
-        return A.sigmoidBinaryCrossEntropy(flat, t, { weights: w });
-      }
+      if (cfg.loss === 'focal_bce') return A.focalBinaryCrossEntropy(flat, t, { gamma: cfg.focalGamma, posWeight: cfg.posWeight });
       return A.sigmoidBinaryCrossEntropy(flat, t, { posWeight: cfg.posWeight || 1 });
     },
     predict(model, ds, idx) {
@@ -811,7 +788,7 @@ export const TASKS = {
       }
       const roc = M.rocCurve(scores, y);
       const pr = M.prCurve(scores, y);
-      const best = M.bestF1Threshold(scores, y);
+      const best = { threshold: cfg && Number.isFinite(cfg.decisionThreshold) ? cfg.decisionThreshold : 0.5 };
       const rep = M.binaryReport(scores, y, best.threshold);
       const cal = M.calibration(scores, y, 10);
       const sweep = M.thresholdSweep(scores, y, 25);
@@ -937,17 +914,18 @@ export const TASKS = {
           bestPoint = sweep[sweep.length - 1];
         }
       }
+      const fixed = M.detectionReport(predBoxes.filter(b => b.score >= confThreshold), trueBoxes, 0.5);
       return {
         scalars: {
           mAP50: at50.mAP,
           mAP: apCount ? apSum / apCount : 0,
           f1_at_best_conf: bestPoint ? bestPoint.f1 : 0,
           best_conf_threshold: bestPoint ? bestPoint.threshold : confThreshold,
-          precision: bestPoint ? bestPoint.precision : at50.precision,
-          recall: bestPoint ? bestPoint.recall : at50.recall,
-          tp: bestPoint ? bestPoint.tp : at50.tp,
-          fp: bestPoint ? bestPoint.fp : at50.fp,
-          fn: bestPoint ? bestPoint.fn : at50.fn
+          precision: fixed.precision,
+          recall: fixed.recall,
+          tp: fixed.tp,
+          fp: fixed.fp,
+          fn: fixed.fn
         },
         pr: { points: at50.curve.map((c) => ({ recall: c.recall, precision: c.precision, threshold: c.score })), ap: at50.ap },
         sweep,
@@ -1065,7 +1043,8 @@ export const TASKS = {
         }
       }
       const retrAlt = ds.x2 ? M.retrievalReport(vectors, altVectors, pairLabels, [1, 5]) : null;
-      const best = ys.some((v) => v > 0.5) ? M.bestF1Threshold(Float32Array.from(scores), Float32Array.from(ys)) : { threshold: 0.5, f1: 0, precision: 0, recall: 0 };
+      const threshold = cfg && Number.isFinite(cfg.decisionThreshold) ? cfg.decisionThreshold : 0.5;
+      const best = M.binaryReport(scores, ys, threshold);
       let align = 0;
       let uniform = 0;
       let pairs = 0;

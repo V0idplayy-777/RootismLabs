@@ -168,7 +168,7 @@ function requireDataset() {
 }
 
 async function startRun(options) {
-  if (state.training) { toast('A run is already in progress.', 'error'); return null; }
+  if (state.training || state.runStarting) { toast('A run is already starting or in progress.', 'error'); return null; }
   const model = requireModel();
   if (!model) return null;
   const dataset = requireDataset();
@@ -179,6 +179,18 @@ async function startRun(options) {
   if (specShape.length !== dsShape.length || specShape.some((v, i) => v !== dsShape[i])) {
     const answer = await confirmShapeMismatch(specShape, dsShape);
     if (!answer) return null;
+  }
+  // Runs must remain reproducible after a reload. Persist the exact dataset used
+  // locally before training; if storage fails, do not pretend it was saved.
+  state.runStarting = true;
+  try {
+    await S.saveCurrentDataset();
+  } catch (e) {
+    S.error('Could not save the training dataset locally: ' + e.message + '. Free browser storage and try again.');
+    toast('Could not save the training dataset; training was not started.', 'error');
+    return null;
+  } finally {
+    state.runStarting = false;
   }
   const session = new RunSession(ctx, {
     spec: JSON.parse(JSON.stringify(model.spec)),

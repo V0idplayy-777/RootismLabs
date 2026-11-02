@@ -1,3 +1,4 @@
+import { auditDataset, auditModelDataset } from '../data/preflight.js';
 import { Trainer, normalizeConfig, defaultPrimary } from '../core/train.js';
 import { analyze } from '../core/model.js';
 import { headlineFor } from '../presets/metrics.js';
@@ -61,6 +62,17 @@ export class RunSession {
     }
     if (!this.dataset.splits.test || !this.dataset.splits.test.length) {
       ctx.warn('No held-out test split — reported numbers will not be an honest generalisation estimate.');
+    }
+    const audit = auditDataset(this.dataset);
+    const compatibility = auditModelDataset(this.spec, this.dataset, this.taskKey, info);
+    for (const warning of audit.warnings.concat(compatibility.warnings)) ctx.warn(warning);
+    const errors = audit.errors.concat(compatibility.errors);
+    if (errors.length) {
+      for (const error of errors) ctx.error(error);
+      live.phase = 'failed';
+      ctx.state.training = null;
+      ctx.notify('train');
+      return null;
     }
     this.trainer = new Trainer({
       spec: this.spec,

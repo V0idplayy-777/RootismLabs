@@ -1789,9 +1789,8 @@ export function softmaxCrossEntropy(logits, labels, opts) {
       const cw = w ? w[y] : 1;
       const scale = gy[0] * cw / denom;
       for (let c = 0; c < C; c++) {
-        let t = probs[n * C + c];
-        if (smoothing > 0) t = (1 - smoothing) * t + smoothing / C;
-        g[n * C + c] = scale * (t - (c === y ? 1 : 0));
+        const target = (c === y ? 1 - smoothing : 0) + smoothing / C;
+        g[n * C + c] = scale * (probs[n * C + c] - target);
       }
     }
     logits.g = addInto(ensureGrad(logits), g);
@@ -1803,36 +1802,100 @@ export function softmaxCrossEntropy(logits, labels, opts) {
 
 export function sigmoidBinaryCrossEntropy(logits, targets, opts) {
   opts = opts || {};
-  const n = logits.d.length;
-  const ls = logits.d;
-  const ts = targets.d;
-  const w = opts.weights || null;
-  let total = 0;
-  let wsum = 0;
+  const n = logits.d.length, ls = logits.d, ts = targets.d;
+  const w = opts.weights || null, posW = opts.posWeight === undefined ? 1 : opts.posWeight;
+  let total = 0, wsum = 0;
   const perElem = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    const x = ls[i];
-    const t = ts[i];
-    const l = Math.max(x, 0) - x * t + Math.log1p(Math.exp(-Math.abs(x)));
+    const x = ls[i], t = ts[i], common = Math.log1p(Math.exp(-Math.abs(x)));
+    const l = posW * t * (Math.max(-x, 0) + common) + (1 - t) * (Math.max(x, 0) + common);
     perElem[i] = l;
     const cw = w ? w[i] : 1;
-    total += l * cw;
-    wsum += cw;
+    total += l * cw; wsum += cw;
   }
   const denom = opts.reduction === 'sum' ? 1 : Math.max(wsum, 1e-9);
-  const posW = opts.posWeight || 1;
   const out = mk(new Float32Array([total / denom]), [1], [logits], null, 'bce_with_logits');
   out.bwd = (gy) => {
     const g = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      const p = 1 / (1 + Math.exp(-ls[i]));
-      const cw = w ? w[i] : 1;
-      const extra = ts[i] > 0.5 ? posW : 1;
-      g[i] = gy[0] * cw * extra * (p - ts[i]) / denom;
+      const p = 1 / (1 + Math.exp(-ls[i])), t = ts[i], cw = w ? w[i] : 1;
+      g[i] = gy[0] * cw * (posW * t * (p - 1) + (1 - t) * p) / denom;
     }
     logits.g = addInto(ensureGrad(logits), g);
   };
   out.perSample = perElem;
+  return out;
+}
+
+// Focal loss with the derivative of the focusing term included. Soft targets
+// are supported by weighting the positive and negative terms separately.
+export function focalBinaryCrossEntropy(logits, targets, opts) {
+  opts = opts || {};
+  const gamma = opts.gamma === undefined ? 2 : opts.gamma;
+  const posW = opts.posWeight === undefined ? 1 : opts.posWeight;
+  const n = logits.d.length, probs = new Float32Array(n), posLoss = new Float32Array(n), negLoss = new Float32Array(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const x = logits.d[i], y = targets.d[i];
+    if (!Number.isFinite(y) || y < 0 || y > 1) throw new Error('Focal binary targets must be between 0 and 1.');
+    const p = 1 / (1 + Math.exp(-x)), common = Math.log1p(Math.exp(-Math.abs(x)));
+    const pos = Math.max(-x, 0) + common, neg = Math.max(x, 0) + common;
+    probs[i] = p; posLoss[i] = pos; negLoss[i] = neg;
+    total += posW * y * Math.pow(1 - p, gamma) * pos + (1 - y) * Math.pow(p, gamma) * neg;
+  }
+  const denom = Math.max(1, n);
+  const out = mk(new Float32Array([total / denom]), [1], [logits], null, 'focal_bce');
+  out.bwd = (gy) => {
+    const g = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const y = targets.d[i], p = probs[i], dp = p * (1 - p);
+      const posFocus = Math.pow(1 - p, gamma), negFocus = Math.pow(p, gamma);
+      const posDerivative = gamma === 0 ? 0 : -gamma * Math.pow(Math.max(1e-12, 1 - p), gamma - 1) * dp;
+      const negDerivative = gamma === 0 ? 0 : gamma * Math.pow(Math.max(1e-12, p), gamma - 1) * dp;
+      g[i] = gy[0] / denom * (posW * y * (posFocus * (p - 1) + posLoss[i] * posDerivative) +
+        (1 - y) * (negFocus * p + negLoss[i] * negDerivative));
+    }
+    logits.g = addInto(ensureGrad(logits), g);
+  };
+  return out;
+}
+
+export function focalSoftmaxCrossEntropy(logits, labels, opts) {
+  opts = opts || {};
+  const gamma = opts.gamma === undefined ? 2 : opts.gamma;
+  const smoothing = opts.labelSmoothing || 0, weights = opts.weights || null;
+  const B = logits.shape[0], C = logits.shape[1];
+  const probs = new Float32Array(B * C), losses = new Float32Array(B);
+  let total = 0, wsum = 0;
+  for (let i = 0; i < B; i++) {
+    const y = labels[i];
+    if (!Number.isInteger(y) || y < 0 || y >= C) throw new Error('Class index out of bounds.');
+    let max = -Infinity, sum = 0;
+    for (let c = 0; c < C; c++) max = Math.max(max, logits.d[i*C+c]);
+    for (let c = 0; c < C; c++) { const p = Math.exp(logits.d[i*C+c] - max); probs[i*C+c] = p; sum += p; }
+    for (let c = 0; c < C; c++) probs[i*C+c] /= sum;
+    const pt = Math.max(probs[i*C+y], 1e-12);
+    let ce = -(1 - smoothing) * Math.log(pt);
+    if (smoothing) for (let c = 0; c < C; c++) ce -= smoothing / C * Math.log(Math.max(probs[i*C+c], 1e-12));
+    losses[i] = ce;
+    const w = weights ? weights[y] : 1;
+    total += w * Math.pow(1 - pt, gamma) * ce; wsum += w;
+  }
+  const denom = Math.max(wsum, 1e-9);
+  const out = mk(new Float32Array([total / denom]), [1], [logits], null, 'focal_softmax_cross_entropy');
+  out.bwd = (gy) => {
+    const g = new Float32Array(B * C);
+    for (let i = 0; i < B; i++) {
+      const y = labels[i], pt = probs[i*C+y], oneMinus = Math.max(1e-12, 1 - pt), focus = Math.pow(oneMinus, gamma);
+      const w = weights ? weights[y] : 1;
+      for (let c = 0; c < C; c++) {
+        const p = probs[i*C+c], target = (c === y ? 1 - smoothing : 0) + smoothing / C;
+        const df = gamma === 0 ? 0 : -gamma * Math.pow(oneMinus, gamma - 1) * pt * ((c === y ? 1 : 0) - p);
+        g[i*C+c] = gy[0] * w * (focus * (p - target) + losses[i] * df) / denom;
+      }
+    }
+    logits.g = addInto(ensureGrad(logits), g);
+  };
   return out;
 }
 

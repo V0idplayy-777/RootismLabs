@@ -22,9 +22,9 @@ export function createExportPanel(ctx) {
     docString: '',
     notes: '',
     measure: true,
-    split: 'test',
+    split: 'val',
     bundle: true,
-    includeDataset: true,
+    includeDataset: false,
     includeFullDataset: false,
     sampleLimit: 60
   };
@@ -116,6 +116,8 @@ export function createExportPanel(ctx) {
     if (!built) return;
     const ds = ctx.state.dataset;
     if (!ds) { ctx.error('Load the dataset this model was trained on to measure quantization impact.'); return; }
+    if (built.record && built.record.datasetHash && (!ds.digest || ds.digest.contentHash !== built.record.datasetHash)) { ctx.error('Load the exact dataset used by this run before measuring quantization.'); return; }
+    if (options.split === 'test') ctx.warn('Selecting precision on test data contaminates the test set. Use validation for selection.');
     const wanted = [];
     for (const key of ['fp16', 'bf16', 'int8', 'uint8']) {
       const inSelection = selections.some((s) => s.precision === key);
@@ -129,7 +131,7 @@ export function createExportPanel(ctx) {
       impact = measurePrecisionImpact({
         model: built.model,
         dataset: ds,
-        taskKey: ctx.state.taskKey || ds.task,
+        taskKey: built.record ? built.record.taskKey : (ctx.state.taskKey || ds.task),
         config: built.record ? built.record.config : ctx.state.trainConfig,
         split: options.split,
         primaryMetric: built.record && built.record.headline ? built.record.headline.metric : null,
@@ -156,19 +158,18 @@ export function createExportPanel(ctx) {
       const built = await buildModel();
       const record = built.record;
       const ds = ctx.state.dataset;
-      if (record && ds && record.datasetHash && ds.digest && ds.digest.contentHash !== record.datasetHash) {
-        ctx.warn('The loaded dataset does not match the one this run was trained on. The model card will record the run\'s own dataset hash.');
-      }
+      if (record && ds && record.datasetHash && (!ds.digest || ds.digest.contentHash !== record.datasetHash)) throw new Error('The loaded dataset does not match this run. Load the original dataset before exporting, to avoid bundling the wrong preprocessing and labels.');
+      if (record && !ds) ctx.warn('No dataset loaded: this export cannot include its preprocessing, label mapping, or data provenance. Load the original dataset to include them.');
       result = runExport({
         model: built.model,
         dataset: ds,
         run: record,
         formats: selections.slice(),
-        taskKey: ctx.state.taskKey || (record ? record.taskKey : ds ? ds.task : 'multiclass'),
+        taskKey: record ? record.taskKey : (ctx.state.taskKey || (ds ? ds.task : 'multiclass')),
         config: record ? record.config : ctx.state.trainConfig,
         modelName: options.modelName || (record ? record.modelName : ctx.state.graph.name),
-        description: options.description || (ctx.state.graph.meta ? ctx.state.graph.meta.description : ''),
-        docString: options.docString || ((options.modelName || ctx.state.graph.name) + ' exported from Rootism Labs'),
+        description: options.description || (built.model.spec.meta ? built.model.spec.meta.description : ''),
+        docString: options.docString || ((options.modelName || built.model.spec.name || 'Model') + ' exported from Rootism Labs'),
         notes: options.notes ? options.notes.split('\n').filter((l) => l.trim()) : [],
         seed: record ? record.seed : (ctx.state.trainConfig ? ctx.state.trainConfig.seed : null),
         quantization: impact,
@@ -260,7 +261,7 @@ export function createExportPanel(ctx) {
     bodyHost.appendChild(el('div', { class: 'col gap4' }, [
       boolRow('measure quantization impact during build', options.measure, (v) => { options.measure = v; }, 're-evaluates every non-fp32 artifact on the chosen split'),
       boolRow('build a single ZIP bundle', options.bundle, (v) => { options.bundle = v; }),
-      boolRow('include a dataset sample in the bundle', options.includeDataset, (v) => { options.includeDataset = v; }),
+      boolRow('include dataset samples in the bundle', options.includeDataset, (v) => { options.includeDataset = v; }, 'May disclose private data; disabled by default.'),
       boolRow('include the full dataset in the bundle', options.includeFullDataset, (v) => { options.includeFullDataset = v; }, 'large; only do this if the recipient needs to reproduce training'),
       numberRow('sample limit', options.sampleLimit, (v) => { options.sampleLimit = v; })
     ]));

@@ -19,7 +19,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 64 }],
       ['dense', { units: 12, activation: 'linear' }]
     ],
-    train: { epochs: 18, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 95000, min: 20000, max: 400000 },
     reference: { params: [200000, 2000000], note: 'Production language id runs on a fastText-style shallow net or a distilled transformer; both are larger than what trains comfortably in a tab.' }
   },
@@ -40,7 +40,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 64 }],
       ['dense', { units: 18, activation: 'linear' }]
     ],
-    train: { epochs: 18, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 130000, min: 20000, max: 500000 },
     reference: { params: [500000, 5000000], note: 'Shipped assistants usually pair this with a slot tagger; the classifier alone is rarely the largest model in the stack.' }
   },
@@ -61,7 +61,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 48 }],
       ['dense', { units: 3, activation: 'linear' }]
     ],
-    train: { epochs: 18, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 80000, min: 15000, max: 400000 },
     reference: { params: [1000000, 10000000], note: 'Real moderation stacks are large multilingual encoders; this is the shape of the final classifier head.' }
   },
@@ -84,7 +84,7 @@ export const PRESET_MODELS = {
       ['conv1d', { filters: 48, kernel: 3 }],
       ['dense', { units: 15, activation: 'linear' }]
     ],
-    train: { epochs: 30, batchSize: 32, optimizer: { kind: 'adamw', lr: 0.006, weightDecay: 0.0005 }, labelSmoothing: 0.05 },
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adamw', lr: 0.006, weightDecay: 0.0005 }, labelSmoothing: 0.05 },
     budget: { target: 30000, min: 8000, max: 150000 },
     reference: { params: [10000000, 350000000], note: 'Production PII pipelines use a fine-tuned transformer; the character-window convolution here is the small-model alternative that still catches malformed identifiers.' }
   },
@@ -105,7 +105,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 80 }],
       ['dense', { units: 16, activation: 'linear' }]
     ],
-    train: { epochs: 18, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 180000, min: 30000, max: 600000 },
     reference: { params: [1000000, 50000000], note: 'Repository-scale language detection usually rides on an existing code embedding; a standalone head is far smaller.' }
   },
@@ -126,7 +126,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 48 }],
       ['dense', { units: 5, activation: 'linear' }]
     ],
-    train: { epochs: 20, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 40000, min: 8000, max: 200000 },
     reference: { params: [50000, 2000000], note: 'zxcvbn is a hand-written matcher, not a network; a learned band classifier sits in the same size range.' }
   },
@@ -147,7 +147,7 @@ export const PRESET_MODELS = {
       ['dense', { units: 48, activation: 'linear' }],
       ['l2normalize', {}]
     ],
-    train: { epochs: 40, batchSize: 32, optimizer: { kind: 'adamw', lr: 0.003, weightDecay: 0.0005 }, temperature: 0.07, loss: 'supcon' },
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.003, weightDecay: 0.0005 }, temperature: 0.07, loss: 'supcon' },
     budget: { target: 55000, min: 10000, max: 300000 },
     reference: { params: [20000000, 120000000], note: 'MiniLM-class encoders are the usual commercial choice; a projection head over hashed features is the sub-100K alternative.' }
   },
@@ -167,7 +167,7 @@ export const PRESET_MODELS = {
       ['gru', { units: 48, returnSeq: true }],
       ['dense', { units: 128, activation: 'linear' }]
     ],
-    train: { epochs: 12, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 12, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 22000, min: 5000, max: 200000 },
     reference: { params: [1000000, 100000000], note: 'GPT-2 small is 124M parameters; on-device autocomplete usually ships a pruned GRU or a quantised transformer under 10M.' }
   }
@@ -191,7 +191,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 32, returnSeq: false }],
       ['dense', { units: 1, activation: 'linear' }]
     ],
-    train: { epochs: 16, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 16, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 12000, min: 4000, max: 120000 },
     reference: { params: [100000, 1000000], note: 'The 100K to 1M range in the brief is what ships on a DSP; widen the convolution and recurrent layers here to walk towards it.' }
   },
@@ -211,7 +211,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 32, returnSeq: true }],
       ['dense', { units: 1, activation: 'linear' }]
     ],
-    train: { epochs: 14, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 14, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 9000, min: 3000, max: 200000 },
     reference: { params: [1000000, 2000000], note: 'Silero VAD is about 1M parameters and runs on a single thread; this preset is the same topology one hundred times narrower.' }
   },
@@ -231,7 +231,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 32, returnSeq: true }],
       ['dense', { units: 129, activation: 'linear' }]
     ],
-    train: { epochs: 25, batchSize: 16, optimizer: { kind: 'adam', lr: 0.004 } },
+    train: { epochs: 25, batchSize: 16, optimizer: { name: 'adam', lr: 0.004 } },
     budget: { target: 24000, min: 8000, max: 100000 },
     reference: { params: [85000, 100000], note: 'RNNoise is under 100K parameters by design; this preset sits in the same bracket.' }
   },
@@ -252,7 +252,7 @@ Object.assign(PRESET_MODELS, {
       ['dropout', { rate: 0.3 }],
       ['dense', { units: 36, activation: 'linear' }]
     ],
-    train: { epochs: 40, batchSize: 32, optimizer: { kind: 'adamw', lr: 0.004, weightDecay: 0.0004 }, labelSmoothing: 0.1 },
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.004, weightDecay: 0.0004 }, labelSmoothing: 0.1 },
     budget: { target: 14000, min: 4000, max: 150000 },
     reference: { params: [50000, 1000000], note: 'CREPE is about 24M parameters; a chromatic classifier over a narrow band is two orders of magnitude smaller.' }
   },
@@ -273,7 +273,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 32, returnSeq: false }],
       ['dense', { units: 12, activation: 'linear' }]
     ],
-    train: { epochs: 16, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 16, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 14000, min: 5000, max: 200000 },
     reference: { params: [1000000, 7000000], note: 'YAMNet and PANNs sit in this range and cover 521 classes; twelve classes needs far less.' }
   },
@@ -294,7 +294,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 24, returnSeq: true }],
       ['dense', { units: 1, activation: 'linear' }]
     ],
-    train: { epochs: 14, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 14, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 10000, min: 4000, max: 150000 },
     reference: { params: [200000, 3000000], note: 'Madmom-style onset detectors are a few hundred thousand parameters; the tolerance window matters more than the size.' }
   },
@@ -315,7 +315,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 3, kernel: 3, activation: 'linear', kernelInit: 'zeros' }],
       ['add', {}, { from: ['prev', 'input'] }]
     ],
-    train: { epochs: 40, batchSize: 32, optimizer: { kind: 'adam', lr: 0.01 } },
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adam', lr: 0.01 } },
     budget: { target: 3000, min: 1000, max: 60000 },
     reference: { params: [12000, 1500000], note: 'FSRCNN is about 12K parameters, which is the bracket this preset targets; EDSR and RCAN are far larger.' }
   },
@@ -336,7 +336,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 3, kernel: 3, activation: 'linear', kernelInit: 'zeros' }],
       ['add', {}, { from: ['prev', 'input'] }]
     ],
-    train: { epochs: 20, batchSize: 24, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 20, batchSize: 24, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 5000, min: 1500, max: 200000 },
     reference: { params: [500000, 26000000], note: 'DnCNN is about 556K and Restormer is 26M; a two-layer residual net is the sub-10K end of the same idea.' }
   },
@@ -357,7 +357,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 24, kernel: 3, stride: 2 }],
       ['conv2d', { filters: 5, kernel: 3, activation: 'linear' }]
     ],
-    train: { epochs: 30, batchSize: 24, optimizer: { kind: 'adam', lr: 0.005 }, coordScale: 4, confThreshold: 0.3 },
+    train: { epochs: 30, batchSize: 24, optimizer: { name: 'adam', lr: 0.005 }, coordScale: 4, confThreshold: 0.3 },
     budget: { target: 11000, min: 4000, max: 500000 },
     reference: { params: [100000, 500000], note: 'BlazeFace is about 100K to 500K parameters for two anchors per cell; widen the stack here to approach it.' }
   },
@@ -380,7 +380,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 16, kernel: 3 }],
       ['conv2d', { filters: 1, kernel: 3, activation: 'linear' }]
     ],
-    train: { epochs: 25, batchSize: 24, optimizer: { kind: 'adam', lr: 0.006 }, loss: 'bce_dice' },
+    train: { epochs: 25, batchSize: 24, optimizer: { name: 'adam', lr: 0.006 }, loss: 'bce_dice' },
     budget: { target: 8000, min: 2000, max: 1000000 },
     reference: { params: [100000, 1000000], note: 'MobileNetV3-based segmenters land in the 100K to 1M range; add depth or width here to reach it.' }
   },
@@ -400,7 +400,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 16, kernel: 3 }],
       ['conv2d', { filters: 3, kernel: 3, activation: 'linear' }]
     ],
-    train: { epochs: 20, batchSize: 24, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 20, batchSize: 24, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 4000, min: 1500, max: 2000000 },
     reference: { params: [1000000, 2000000], note: 'Johnson perceptual-loss transformers are 1M to 2M parameters and need instance norm plus residual blocks; fork this graph and add them to scale up.' }
   },
@@ -423,7 +423,7 @@ Object.assign(PRESET_MODELS, {
       ['conv2d', { filters: 12, kernel: 3 }],
       ['conv2d', { filters: 1, kernel: 3, activation: 'linear' }]
     ],
-    train: { epochs: 20, batchSize: 24, optimizer: { kind: 'adam', lr: 0.006 }, loss: 'bce_dice' },
+    train: { epochs: 20, batchSize: 24, optimizer: { name: 'adam', lr: 0.006 }, loss: 'bce_dice' },
     budget: { target: 7000, min: 2000, max: 500000 },
     reference: { params: [500000, 4000000], note: 'U2-Net is about 44M and a distilled saliency net is around 500K; the crop planner only needs the map, not the finest edges.' }
   },
@@ -445,7 +445,7 @@ Object.assign(PRESET_MODELS, {
       ['globalavgpool2d', {}],
       ['dense', { units: 3, activation: 'linear' }]
     ],
-    train: { epochs: 18, batchSize: 24, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 18, batchSize: 24, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 5000, min: 2000, max: 3000000 },
     reference: { params: [2000000, 3000000], note: 'NudeNet and MobileNet-class filters are 2M to 3M parameters; this trunk is the same shape at browser scale.' }
   }
@@ -469,7 +469,7 @@ Object.assign(PRESET_MODELS, {
       ['globalavgpool1d', {}],
       ['dense', { units: 8, activation: 'linear' }]
     ],
-    train: { epochs: 20, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 } },
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
     budget: { target: 2000, min: 600, max: 100000 },
     reference: { params: [20000, 500000], note: 'Wearable activity models ship between 20K and 500K parameters; this one is deliberately at the extreme low end to make the budget indicator interesting.' }
   },
@@ -492,7 +492,7 @@ Object.assign(PRESET_MODELS, {
       ['dense', { units: 192, activation: 'linear' }],
       ['reshape', { shape: '32,6' }]
     ],
-    train: { epochs: 26, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 26, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 14000, min: 3000, max: 300000 },
     reference: { params: [10000, 1000000], note: 'Autoencoders scale with input width; an LSTM variant for longer windows lands in the same bracket.' }
   },
@@ -511,7 +511,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 24, returnSeq: false }],
       ['dense', { units: 8, activation: 'linear' }]
     ],
-    train: { epochs: 30, batchSize: 32, optimizer: { kind: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 0.4 },
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 0.4 },
     budget: { target: 2200, min: 500, max: 100000 },
     reference: { params: [10000, 100000], note: 'The brief puts tiny forecasters at 10K to 100K parameters; N-BEATS and DeepAR are orders of magnitude larger again.' }
   },
@@ -532,7 +532,7 @@ Object.assign(PRESET_MODELS, {
       ['dense', { units: 32 }],
       ['dense', { units: 1, activation: 'linear' }]
     ],
-    train: { epochs: 26, batchSize: 32, optimizer: { kind: 'adamw', lr: 0.006, weightDecay: 0.0004 } },
+    train: { epochs: 26, batchSize: 32, optimizer: { name: 'adamw', lr: 0.006, weightDecay: 0.0004 } },
     budget: { target: 9000, min: 2000, max: 200000 },
     reference: { params: [50000, 2000000], note: 'Fraud stacks combine this with rules and graph features; the sequence model over raw events is the larger half.' }
   },
@@ -552,7 +552,7 @@ Object.assign(PRESET_MODELS, {
       ['gru', { units: 40, returnSeq: true }],
       ['dense', { units: 259, activation: 'linear' }]
     ],
-    train: { epochs: 12, batchSize: 32, optimizer: { kind: 'adam', lr: 0.006 } },
+    train: { epochs: 12, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
     budget: { target: 24000, min: 6000, max: 500000 },
     reference: { params: [1000000, 200000000], note: 'NNCP and CMIX are tens to hundreds of megabytes and win every compression benchmark; they also take hours per megabyte.' }
   },
@@ -574,7 +574,7 @@ Object.assign(PRESET_MODELS, {
       ['dense', { units: 128 }],
       ['dense', { units: 3, activation: 'linear' }]
     ],
-    train: { epochs: 80, batchSize: 128, optimizer: { kind: 'adam', lr: 0.003 } },
+    train: { epochs: 80, batchSize: 128, optimizer: { name: 'adam', lr: 0.003 } },
     budget: { target: 55000, min: 10000, max: 500000 },
     reference: { params: [50000, 500000], note: 'The brief calls for a 50K-parameter network that is the image; that is exactly what this preset lands on.' }
   }

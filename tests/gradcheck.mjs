@@ -216,5 +216,26 @@ let ok = true;
   }, [za]);
 }
 
+{
+  const x = param('loss-logits', [2, 3], new Float32Array([0.3, -0.7, 1.1, 0.2, 0.9, -0.4]));
+  const labels = Int32Array.from([2, 0]);
+  ok &= check('smoothed weighted cross entropy', () => { x.g = null; return A.softmaxCrossEntropy(x, labels, { labelSmoothing: 0.2, weights: [2, 1, 3] }); }, [x]);
+  ok &= check('smoothed weighted focal multiclass', () => { x.g = null; return A.focalSoftmaxCrossEntropy(x, labels, { gamma: 1.5, labelSmoothing: 0.2, weights: [2, 1, 3] }); }, [x]);
+  const ce = A.softmaxCrossEntropy(x, labels, { labelSmoothing: 0.2, weights: [2, 1, 3] }).d[0];
+  const focalZero = A.focalSoftmaxCrossEntropy(x, labels, { gamma: 0, labelSmoothing: 0.2, weights: [2, 1, 3] }).d[0];
+  if (Math.abs(ce - focalZero) > 1e-6) { console.log('FAIL focal gamma zero != cross entropy'); ok = false; }
+}
+{
+  const x = param('binary-logits', [4, 1], new Float32Array([-1.2, 0.3, 1.5, -0.5]));
+  const y = tensor([[0], [1], [1], [0]]);
+  ok &= check('weighted binary cross entropy', () => { x.g = null; return A.sigmoidBinaryCrossEntropy(x, y, { posWeight: 2.7 }); }, [x]);
+  ok &= check('weighted focal binary cross entropy', () => { x.g = null; return A.focalBinaryCrossEntropy(x, y, { gamma: 1.5, posWeight: 2.7 }); }, [x]);
+  const soft = tensor([[0.2], [0.7], [0.95], [0.4]]);
+  ok &= check('soft target focal BCE', () => { x.g = null; return A.focalBinaryCrossEntropy(x, soft, { gamma: 1.5, posWeight: 2.7 }); }, [x]);
+  const ce = A.sigmoidBinaryCrossEntropy(x, y, { posWeight: 2.7 }).d[0];
+  const focalZero = A.focalBinaryCrossEntropy(x, y, { gamma: 0, posWeight: 2.7 }).d[0];
+  if (Math.abs(ce - focalZero) > 1e-6) { console.log('FAIL focal gamma zero != BCE'); ok = false; }
+}
+
 console.log(ok ? 'ALL GRADIENT CHECKS PASSED' : 'SOME CHECKS FAILED');
 process.exit(ok ? 0 : 1);

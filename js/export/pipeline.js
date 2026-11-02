@@ -188,8 +188,10 @@ export function buildEvaluator(input) {
   const config = normalizeConfig(input.config || {}, task);
   const trainer = new Trainer({ spec, dataset, taskKey, config });
   const prepared = trainer.prepare();
-  const splitName = input.split || (dataset.splits.test && dataset.splits.test.length ? 'test' : 'val');
+  // Precision is a model-selection decision: default to validation, not test.
+  const splitName = input.split || 'val';
   const idx = dataset.splits[splitName];
+  if (!idx || !idx.length) throw new Error('Precision comparison requires a non-empty ' + splitName + ' split.');
   const primary = input.primaryMetric || defaultPrimary(task);
   const direction = monitorMode(task, primary);
   return {
@@ -323,7 +325,9 @@ export function runExport(input) {
   for (const sel of selections) {
     if (input.onProgress) input.onProgress({ stage: 'export', format: sel.format, precision: sel.precision });
     try {
-      artifacts.push(exportFormat(model, sel.format, sel.precision, { metadata: input.metadata, docString: input.docString }));
+      const artifact = exportFormat(model, sel.format, sel.precision, { metadata: input.metadata, docString: input.docString });
+      if (artifact.unsupported && artifact.unsupported.length) throw new Error('Unsupported export layers: ' + artifact.unsupported.join(', '));
+      artifacts.push(artifact);
     } catch (e) {
       problems.push({ format: sel.format, precision: sel.precision, message: e.message });
     }

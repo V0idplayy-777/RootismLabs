@@ -4,6 +4,7 @@ import { logMelFrames, normalizeFeatures, wavDecode, wavEncode, resample, peakNo
 import { zipRead, zipWrite } from '../core/zip.js';
 import { utf8Decode, base64Encode, base64Decode, float32ToBase64, base64ToFloat32 } from '../core/base64.js';
 import { MODALITIES } from './dataset.js';
+import { sha256Text } from '../core/hash.js';
 
 export const NATIVE_VERSION = 3;
 
@@ -314,7 +315,7 @@ export function inferColumns(columns, rows, options) {
     let kind;
     if (!filled) kind = 'empty';
     else if (numericFraction >= 0.9) kind = 'numeric';
-    else if (textFraction >= 0.5 && (avgTokens >= 2.5 || chars / Math.max(1, filled) >= 24)) kind = 'text';
+    else if (textFraction >= 0.5 && (avgTokens >= 2.5 || chars / Math.max(1, filled) >= 24 || /^(text|message|sentence|utterance|content|body)$/i.test(col))) kind = 'text';
     else if (distinct.size <= Math.max(2, Math.min(64, Math.ceil(filled * 0.5)))) kind = 'categorical';
     else kind = 'text';
     const counts = Array.from(distinct.entries()).sort((a, b) => b[1] - a[1]);
@@ -419,12 +420,15 @@ export function tableToDataset(input) {
   const columns = opts.columns || (rows.length ? Object.keys(rows[0]) : []);
   if (!rows.length) throw new Error('no rows to import');
   const inferred = inferColumns(columns, rows, opts);
-  const planning = planFeatures(inferred, rows, opts);
+  const selectedLabel = opts.labelColumn || pickLabelColumn(inferred, rows, opts);
+  const planning = planFeatures(inferred, rows, Object.assign({}, opts, { labelColumn: selectedLabel }));
   const labelColumn = planning.labelColumn;
   const labelInfo = inferred.find((c) => c.name === labelColumn) || null;
   const task = inferTask(labelInfo, opts);
   const modality = opts.modality || (planning.plan.some((p) => p.kind === 'text') ? 'text' : 'tabular');
   const labelValues = rows.map((r) => (labelColumn ? r[labelColumn] : undefined));
+  if (labelColumn && labelValues.some(v => v === undefined || v === null || String(v).trim() === '')) throw new Error('Label column contains missing values; fix or remove those rows before import.');
+  if (labelColumn && (task === 'regression' || task === 'forecast') && labelValues.some(v => !Number.isFinite(Number(v)))) throw new Error('Regression targets must be finite numbers.');
 
   let labels = [];
   let yPer = 1;
@@ -462,7 +466,7 @@ export function tableToDataset(input) {
     labels = Array.from(counts.entries()).sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1)).map((e) => e[0]);
     if (task === 'binary' && labels.length === 2) {
       const negative = labels.find((l) => ['0', 'no', 'false', 'negative', 'ham', 'benign', 'normal', 'clean', 'not_spam'].indexOf(lower(l)) >= 0);
-      if (negative) labels = [labels.find((l) => l !== negative), negative];
+      if (negative) labels = [negative, labels.find((l) => l !== negative)];
     }
     for (let i = 0; i < rows.length; i++) {
       const key = String(labelValues[i] === undefined || labelValues[i] === null ? '' : labelValues[i]).trim();
@@ -472,7 +476,54 @@ export function tableToDataset(input) {
   return finishTableDataset(opts, rows, planning, inferred, task, modality, labels, y, yPer, labelColumn, labelValues);
 }
 
+// Applies the persisted table contract to a new row. A model consumes this
+// vector, not the original raw row. Unknown categories use the other bucket
+// when present, otherwise an all-zero one-hot vector.
+export function transformTableRow(row, spec) {
+  if (!spec || spec.kind !== 'table') throw new Error('A table feature specification is required.');
+  const out = new Float32Array(spec.dim);
+  for (const p of spec.columns) {
+    const raw = row[p.column];
+    const value = raw === undefined || raw === null ? '' : String(raw).trim();
+    if (p.kind === 'text') out.set(hashFeatures(value, p.textSpec).subarray(0, p.width), p.offset);
+    else if (p.kind === 'onehot') {
+      let idx = p.vocab.indexOf(value);
+      if (idx < 0 && p.unknownBucket !== null && p.unknownBucket !== undefined) idx = p.unknownBucket;
+      if (idx >= 0 && idx < p.width) out[p.offset + idx] = 1;
+    } else {
+      const num = value === '' ? NaN : Number(value);
+      let v = Number.isFinite(num) ? num : (p.missingFill ?? 0);
+      if (spec.standardize !== false && p.std !== null && p.std > 1e-9) v = (v - (p.mean || 0)) / p.std;
+      out[p.offset] = v;
+    }
+  }
+  return out;
+}
+
 function finishTableDataset(opts, rows, planning, inferred, task, modality, labels, y, yPer, labelColumn, labelValues) {
+  // Assign rows before learning *any* feature transformations.  The temporary
+  // dataset carries only row IDs; duplicate rows are retained and audited.
+  let groups = null;
+  if (opts.groupColumn) {
+    if (opts.groupColumn === labelColumn) throw new Error('The group column cannot also be the label.');
+    if (!inferred.some(c => c.name === opts.groupColumn)) throw new Error('Group column not found: ' + opts.groupColumn);
+    const ids = new Map();
+    groups = Int32Array.from(rows.map(row => {
+      const key = String(row[opts.groupColumn] ?? '').trim();
+      if (!key) throw new Error('Group column contains missing values.');
+      if (!ids.has(key)) ids.set(key, ids.size);
+      return ids.get(key);
+    }));
+  }
+  const splitMethod = opts.groupColumn ? 'group' : (opts.splitMethod || 'stratified');
+  const temp = createDataset({ x: Float32Array.from(rows, (_, i) => i), xShape: [1], y, yShape: [yPer], task, labels, groups, dedupe: false,
+    splitMethod, splitRatios: opts.splitRatios || [0.7, 0.15, 0.15], splitSeed: opts.splitSeed });
+  const trainRows = Array.from(temp.splits.train, i => rows[i]);
+  if (!trainRows.length) throw new Error('The training split is empty.');
+  const featureColumns = inferred.map(c => c.name).filter(c => c !== opts.groupColumn);
+  const fittedInference = inferColumns(featureColumns, trainRows, opts);
+  planning = planFeatures(fittedInference, trainRows, Object.assign({}, opts, { labelColumn }));
+  modality = opts.modality || (planning.plan.some(p => p.kind === 'text') ? 'text' : 'tabular');
   const dim = planning.dim || 1;
   const x = new Float32Array(rows.length * dim);
   const meta = [];
@@ -489,7 +540,7 @@ function finishTableDataset(opts, rows, planning, inferred, task, modality, labe
         if (idx < 0) idx = p.dropped ? p.vocab.length : -1;
         if (idx >= 0) x[i * dim + p.offset + idx] = 1;
       } else {
-        const num = Number(value);
+        const num = value === '' ? NaN : Number(value);
         let out = Number.isFinite(num) ? num : p.missingFill;
         if (opts.standardize !== false && p.std !== null && p.std > 1e-9) out = (out - (p.mean || 0)) / p.std;
         x[i * dim + p.offset] = out;
@@ -505,6 +556,9 @@ function finishTableDataset(opts, rows, planning, inferred, task, modality, labe
   }
   const featureSpec = {
     kind: 'table',
+    fittedOn: 'train',
+    fitSplitHash: sha256Text(Array.from(temp.splits.train).sort((a, b) => a - b).join(',')),
+    standardize: opts.standardize !== false,
     dim,
     columns: planning.plan.map((p) => ({
       column: p.column,
@@ -512,6 +566,8 @@ function finishTableDataset(opts, rows, planning, inferred, task, modality, labe
       offset: p.offset,
       width: p.width,
       vocab: p.vocab || null,
+      unknownBucket: p.kind === 'onehot' && p.dropped ? p.vocab.length : null,
+      missingFill: p.missingFill === undefined ? null : p.missingFill,
       mean: p.mean === undefined ? null : p.mean,
       std: p.std === undefined ? null : p.std,
       textSpec: p.textSpec || null
@@ -520,6 +576,9 @@ function finishTableDataset(opts, rows, planning, inferred, task, modality, labe
   };
   const ds = createDataset({
     name: opts.name || 'Imported dataset',
+    source: 'imported',
+    groups,
+    splits: temp.splits,
     description: opts.description || '',
     modality,
     task,
@@ -531,12 +590,12 @@ function finishTableDataset(opts, rows, planning, inferred, task, modality, labe
     meta,
     columns: planning.plan.map((p) => p.column),
     featureSpec,
-    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === undefined ? true : opts.allowsCommercial, notes: 'You imported this data. Confirm you have the rights to use it, including commercially.' },
+    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === true, notes: 'You imported this data. Confirm you have the rights to use it, including commercially.' },
     provenance: Object.assign({ origin: 'import', format: opts.format || 'table', rows: rows.length, labelColumn: labelColumn || null }, opts.provenance || {}),
     config: Object.assign({ standardize: opts.standardize !== false, textDim: (planning.plan.find((p) => p.kind === 'text') || {}).width || null }, opts.config || {}),
-    splitMethod: opts.splitMethod || 'stratified',
+    splitMethod: temp.splitMethod,
     splitRatios: opts.splitRatios || [0.7, 0.15, 0.15],
-    splitSeed: opts.splitSeed
+    splitSeed: temp.splitSeed
   });
   ds.importReport = {
     rows: rows.length,
@@ -700,7 +759,7 @@ export function importAudioFiles(files, options) {
     sampleRate: cfg.sampleRate,
     meta: rows.map((r) => ({ source: 'import', preview: r.file + ' (' + r.seconds.toFixed(2) + ' s)', text: r.file, file: r.file })),
     featureSpec: { kind: 'logmel', sampleRate: cfg.sampleRate, frameSize: cfg.frameSize, hop: cfg.hop, numMel: cfg.numMel, duration: cfg.duration, frames: shape[0], bins: shape[1] },
-    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === undefined ? true : opts.allowsCommercial, notes: 'Audio you imported. Confirm you hold the rights to the recordings and to any speech in them.' },
+    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === true, notes: 'Audio you imported. Confirm you hold the rights to the recordings and to any speech in them.' },
     provenance: { origin: 'import', format: 'wav', files: rows.length, labelSource: table ? table.source : folderLabels ? 'folder names' : 'default', audioConfig: cfg },
     config: Object.assign({}, cfg),
     splitMethod: opts.splitMethod || 'stratified',
@@ -775,7 +834,7 @@ export function importImageFiles(files, options) {
     labels,
     meta: decoded.map((d) => ({ source: 'import', preview: d.file, text: d.file, file: d.file })),
     featureSpec: { kind: 'rgb_unit', channels, size },
-    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === undefined ? true : opts.allowsCommercial, notes: 'Images you imported. Check the rights before shipping a model trained on them.' },
+    license: opts.license || { id: 'user-supplied', name: 'Supplied by the importer', allowsCommercial: opts.allowsCommercial === true, notes: 'Images you imported. Check the rights before shipping a model trained on them.' },
     provenance: { origin: 'import', format: 'images', files: decoded.length, labelSource: table ? table.source : folderLabels ? 'folder names' : 'default' },
     splitMethod: opts.splitMethod || 'stratified',
     splitRatios: opts.splitRatios || [0.7, 0.15, 0.15]
@@ -879,6 +938,8 @@ export function datasetToNative(ds) {
     version: NATIVE_VERSION,
     exportedAt: Date.now(),
     name: ds.name,
+    source: ds.source,
+    presetKey: ds.presetKey,
     slug: ds.slug,
     description: ds.description,
     modality: ds.modality,
@@ -943,6 +1004,8 @@ export function nativeToDataset(payload) {
   } : null;
   const ds = createDataset({
     name: payload.name,
+    source: payload.source || (payload.presetKey ? 'preset' : 'custom'),
+    presetKey: payload.presetKey,
     slug: payload.slug,
     description: payload.description,
     modality: payload.modality,

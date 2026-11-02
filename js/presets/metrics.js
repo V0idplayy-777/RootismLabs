@@ -14,6 +14,8 @@ export const METRIC_META = {
   samples_per_sec: num('Throughput', 'up', 'optimisation', 'Training samples processed per second.'),
 
   accuracy: pct('Accuracy', 'up', 'classification', 'Share of samples whose predicted class matches the label. Misleading on its own when classes are unbalanced, which is why macro F1 sits next to it.'),
+  accuracy_ci_lower: pct('Accuracy 95% interval · lower', 'flat', 'classification', 'Wilson interval assuming independent representative examples. It excludes distribution shift, clustering and selection uncertainty.'),
+  accuracy_ci_upper: pct('Accuracy 95% interval · upper', 'flat', 'classification', 'Wilson interval assuming independent representative examples. It excludes distribution shift, clustering and selection uncertainty.'),
   macro_f1: pct('Macro F1', 'up', 'classification', 'F1 averaged over classes with equal weight, so a class with twenty samples counts as much as one with two thousand.'),
   weighted_f1: pct('Weighted F1', 'up', 'classification', 'F1 averaged over classes weighted by support. Reads better than macro F1 on imbalanced data, which is exactly when to be suspicious of it.'),
   macro_precision: pct('Macro precision', 'up', 'classification', 'Equal-weight average of per-class precision: of everything predicted as a class, how much was right.'),
@@ -33,7 +35,7 @@ export const METRIC_META = {
   far: pct('False accept rate', 'down', 'binary', 'Share of negatives accepted at the operating threshold. For a wake word this is how often the device wakes up for nothing.'),
   frr: pct('False reject rate', 'down', 'binary', 'Share of positives rejected at the operating threshold. For a wake word this is how often the user has to repeat themselves.'),
   mcc: rat('Matthews correlation', 'up', 'binary', 'Correlation between prediction and label over all four confusion cells. Stays informative when the classes are very unbalanced.'),
-  best_threshold: rat('Best threshold', 'flat', 'binary', 'Score threshold that maximises F1 on this split. Ship this number with the model, not the default 0.5.'),
+  best_threshold: rat('Decision threshold', 'flat', 'binary', 'Fixed configured score threshold used for this split. Select it on validation data, never on the test set.'),
   micro_precision: pct('Micro precision', 'up', 'multilabel', 'Precision pooled over every label decision rather than averaged per label.'),
   micro_recall: pct('Micro recall', 'up', 'multilabel', 'Recall pooled over every label decision.'),
   micro_f1: pct('Micro F1', 'up', 'multilabel', 'F1 pooled over every label decision; dominated by the frequent labels.'),
@@ -150,13 +152,13 @@ export const METRIC_META = {
 
 export const TASK_METRIC_GROUPS = {
   multiclass: [
-    { title: 'Headline', metrics: ['accuracy', 'macro_f1', 'log_loss'] },
+    { title: 'Headline', metrics: ['accuracy', 'accuracy_ci_lower', 'accuracy_ci_upper', 'macro_f1', 'log_loss'] },
     { title: 'Per class', metrics: ['macro_precision', 'macro_recall', 'weighted_f1', 'macro_auroc', 'error_rate'] },
     { title: 'Calibration', metrics: ['ece', 'brier'] }
   ],
   binary: [
     { title: 'Headline', metrics: ['auc_roc', 'average_precision', 'f1'] },
-    { title: 'Operating point', metrics: ['precision', 'recall', 'far', 'frr', 'best_threshold', 'mcc'] },
+    { title: 'Operating point', metrics: ['precision', 'recall', 'far', 'frr', 'best_threshold', 'accuracy', 'accuracy_ci_lower', 'accuracy_ci_upper', 'mcc'] },
     { title: 'Continuous audio', metrics: ['false_accepts_per_hour', 'false_rejects_per_hour', 'detections_per_hour'] },
     { title: 'Calibration', metrics: ['ece', 'brier'] }
   ],

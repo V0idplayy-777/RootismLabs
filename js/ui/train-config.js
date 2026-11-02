@@ -114,6 +114,9 @@ export function configView(ctx, config, options) {
     if (loss === 'focal' || loss === 'focal_bce') {
       host2.appendChild(numberRow('focal gamma', cfg.focalGamma, { min: 0, max: 6, step: 0.1 }, (v) => { cfg.focalGamma = v; onChange(); }));
     }
+    if (['binary', 'multilabel', 'frame_binary', 'onset'].includes(task.key)) {
+      host2.appendChild(numberRow('decision threshold', cfg.decisionThreshold, { min: 0, max: 1, step: 0.01, hint: 'Select using validation data, not the held-out test set.' }, (v) => { cfg.decisionThreshold = v; onChange(); }));
+    }
     if (loss === 'bce' || loss === 'focal_bce' || loss === 'bce_dice') {
       host2.appendChild(numberRow('pos weight', cfg.posWeight, { min: 0.05, max: 50, step: 0.05 }, (v) => { cfg.posWeight = v; onChange(); }));
     }

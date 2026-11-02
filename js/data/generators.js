@@ -21,7 +21,7 @@ export const CC0 = {
   name: 'Generated on your machine',
   url: '',
   allowsCommercial: true,
-  notes: 'Produced in the browser from a deterministic seed. No third-party content is embedded, so you hold all rights to the generated samples and to models trained on them.'
+  notes: 'Generated locally from a deterministic seed. Verify applicable rights, privacy and other obligations for your intended use.'
 };
 
 function ref(name, license, url, note) {
