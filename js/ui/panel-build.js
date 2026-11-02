@@ -260,22 +260,32 @@ export function createBuildPanel(ctx) {
         el('span', { text: compactNumber(info.macs) + ' MACs' }),
         el('span', { text: 'in ' + fmtShape(spec.input.shape) }),
         el('span', { text: 'out ' + fmtShape(info.outputShape) }),
-        el('span', { class: 'badge teal', text: preset.task })
+        el('span', { class: 'badge teal', text: preset.task }),
+        preset.compliance ? el('span', { class: 'badge red', text: 'regulated' }) : null
       ])
     ]);
-    attachTooltip(card, () => '<b>' + preset.name + '</b><br>' + preset.description + '<br><br><span style="color:#8b9298">head</span> ' + preset.head + ' · <span style="color:#8b9298">task</span> ' + preset.task + '<br><span style="color:#8b9298">dataset</span> ' + preset.dataset + '<br><span style="color:#8b9298">budget</span> ' + preset.budget.target.toLocaleString() + ' params (range ' + preset.budget.min.toLocaleString() + '–' + preset.budget.max.toLocaleString() + ')<br><span style="color:#8b9298">reference</span> ' + preset.reference.params.map((v) => v.toLocaleString()).join('–') + ' params');
+    attachTooltip(card, () => '<b>' + preset.name + '</b><br>' + preset.description + '<br><br><span style="color:#8b9298">head</span> ' + preset.head + ' · <span style="color:#8b9298">task</span> ' + preset.task + '<br><span style="color:#8b9298">dataset</span> ' + preset.dataset + '<br><span style="color:#8b9298">budget</span> ' + preset.budget.target.toLocaleString() + ' params (range ' + preset.budget.min.toLocaleString() + '–' + preset.budget.max.toLocaleString() + ')<br><span style="color:#8b9298">reference</span> ' + preset.reference.params.map((v) => v.toLocaleString()).join('–') + ' params' + (preset.compliance ? '<br><br><span style="color:#e0938c">regulated</span> ' + preset.compliance.label : ''));
     return card;
   }
 
   function familyColor(family) {
-    const map = { text: '#e0a33e', audio: '#4fa3a5', vision: '#5b87b5', sensor: '#8a7bb0', series: '#6aa84f', wildcard: '#b0765f' };
+    const map = {
+      text: '#e0a33e', audio: '#4fa3a5', vision: '#5b87b5', sensor: '#8a7bb0', series: '#6aa84f',
+      documents: '#c9a227', finance: '#4f8f6a', security: '#c0603f', industrial: '#7b8fa8',
+      retail: '#b06fa0', dataeng: '#5d9bb0', clinical: '#b04a5a', wildcard: '#b0765f'
+    };
     return map[family] || '#8b9298';
   }
 
   function choosePreset(preset) {
     const spec = buildPresetGraph(preset);
     spec.name = preset.name;
-    spec.meta = Object.assign({}, spec.meta, { presetKey: preset.key, budget: preset.budget, reference: preset.reference, datasetKey: preset.dataset, description: preset.description, tagline: preset.tagline });
+    spec.meta = Object.assign({}, spec.meta, {
+      presetKey: preset.key, budget: preset.budget, reference: preset.reference, datasetKey: preset.dataset,
+      description: preset.description, tagline: preset.tagline,
+      notes: (preset.notes || []).slice(),
+      compliance: preset.compliance || null
+    });
     ctx.state.taskKey = preset.task;
     ctx.state.presetTrain = JSON.parse(JSON.stringify(preset.train || {}));
     ctx.setSpec(spec);

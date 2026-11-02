@@ -1620,10 +1620,16 @@ const EXTRA_TASKS = {
       const predSeries = [];
       const trueSeries = [];
       const naiveSeries = [];
+      const xPer = shapeSize(ds.xShape);
+      const xDim = ds.xShape.length > 1 ? ds.xShape[ds.xShape.length - 1] : 1;
+      const historySteps = Math.max(1, Math.floor(xPer / Math.max(1, xDim)));
       for (let i = 0; i < idx.length; i++) {
         predSeries.push(Array.from(pred.subarray(i * per, (i + 1) * per)));
         trueSeries.push(Array.from(target.subarray(i * per, (i + 1) * per)));
-        const last = ds.x[idx[i] * shapeSize(ds.xShape) + shapeSize(ds.xShape) - 1];
+        // Persistence baseline on the first channel only: with calendar or
+        // promotion channels appended, the last element of the row is a flag and
+        // would make the baseline meaningless.
+        const last = ds.x[idx[i] * xPer + (historySteps - 1) * xDim];
         naiveSeries.push(new Array(per).fill(last));
       }
       const perHorizon = [];

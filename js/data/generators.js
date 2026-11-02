@@ -15,6 +15,7 @@ import {
   IMU_ACTIVITIES, imuWindow, forecastSeries, anomalyWindow, mouseTrace, keystrokeTrace, behaviorFeatures
 } from './signal.js';
 import { stratifiedSplit, randomSplit } from './split.js';
+import { DOMAIN_GENERATORS, DOMAIN_REFERENCES } from './domains.js';
 
 export const CC0 = {
   id: 'generated-local',
@@ -2440,6 +2441,9 @@ Object.assign(GENERATORS, {
     options: [SEED_FIELD, num('imageSize', 'Image size', 48, 16, 96, 8), num('samples', 'Pixel samples', 4000, 256, 16384, 64)]
   }
 });
+
+Object.assign(GENERATORS, DOMAIN_GENERATORS);
+Object.assign(REFERENCE_DATASETS, DOMAIN_REFERENCES);
 
 export const GENERATOR_LIST = Object.keys(GENERATORS).map((k) => GENERATORS[k]);
 

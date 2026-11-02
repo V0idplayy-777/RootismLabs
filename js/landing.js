@@ -120,7 +120,7 @@ function modelRows() {
     const reference = preset.reference || null;
     rows.push(el('tr', {}, [
       cell([el('span', { class: 'bold', text: preset.name }), sub(preset.tagline)], 'wrapcell'),
-      cell(FAMILY_LABEL[preset.family] || preset.family),
+      cell([FAMILY_LABEL[preset.family] || preset.family, preset.compliance ? el('div', {}, [badge('regulated', 'red')]) : null]),
       cell([taskLabel(preset.task), sub(preset.head + ' head')]),
       cell([shapeText(preset.input), sub(preset.inputName)], 'n'),
       cell(whole(info ? info.totalParams : null), 'n'),
@@ -363,7 +363,7 @@ function hero() {
     el('p', { text: 'There is no account, no server and no build step. The page is static JavaScript modules; training, evaluation, quantization and packaging all happen on your machine, and the files land in your download folder. Every number the tool reports comes with the seed, the dataset hash and the configuration that produced it, because a metric you cannot reproduce is an anecdote.' }),
     el('div', { class: 'cta-row' }, [
       el('a', { class: 'btn primary', href: 'studio.html', text: 'Open the workspace' }),
-      el('a', { class: 'btn', href: '#model-presets', text: 'See the 27 presets' }),
+      el('a', { class: 'btn', href: '#model-presets', text: 'See the ' + PRESET_MODEL_LIST.length + ' presets' }),
       el('span', { class: 'hint', text: 'The workspace opens empty. Presets, generators and imports are inside.' })
     ]),
     facts()

@@ -32,7 +32,7 @@ protobuf encoder, SHA-256, the FFT and every chart are written out in this repos
 | `studio.html`, `js/studio.js`, `assets/css/studio.css` | the workspace shell: topbar, rail, status bar, panels |
 | `js/core/` | tensors and autograd, 32 layer types, model analysis, 8 optimizers, 10 schedules, metrics, 17 task types, trainer, hashing, zip, inflate, base64, protobuf, quantization |
 | `js/data/` | FFT, audio features, text features, image ops, signal ops, splitting, dataset object, 29 augmentation ops, synthetic generators, import/export of 9 formats |
-| `js/presets/` | 27 model presets, 27 dataset presets, 127 metric definitions with direction and explanation |
+| `js/presets/` | 56 model presets, 56 dataset presets, 129 metric definitions with direction and explanation |
 | `js/export/` | ONNX, TensorFlow.js, safetensors, model card, bundle, export pipeline |
 | `js/ui/` | DOM helpers, IndexedDB store, workspace state, charts, graph editor, and one module per panel |
 | `tests/` | Node-runnable suites; no browser, no DOM, no network |
@@ -42,7 +42,8 @@ protobuf encoder, SHA-256, the FFT and every chart are written out in this repos
 ```
 node tests/gradcheck.mjs     numeric gradients against finite differences
 node tests/smoke.mjs         22 task and graph combinations trained end to end
-node tests/onnx.mjs          27 presets, emitted op histogram, structural conformance
+node tests/onnx.mjs          56 presets, emitted op histogram, structural conformance
+node tests/preset-domains.mjs every preset dataset and model, shapes, budgets, short training run
 node tests/tfjs.mjs          80 graphs, emitted op histogram, structural conformance
 node tests/inflate.mjs       108 inflate checks against stored, fixed and dynamic Huffman blocks
 node tests/import.mjs        dataset round trips, table inference, audio feature layouts, zip decode
@@ -52,7 +53,7 @@ node tests/production-path.mjs  import and export pipeline regressions
 ```
 
 During development the exporters were also checked against external oracles, which are not needed
-to run or test the site: `onnx` plus `onnxruntime` in Python validated all 27 presets at fp32,
+to run or test the site: `onnx` plus `onnxruntime` in Python validated all 56 presets at fp32,
 fp16, int8 and uint8 (108 of 108 graphs, numeric comparison against the in-browser model),
 `@tensorflow/tfjs` 4.22 loaded and ran every exported graph model, and `safetensors` 0.8.0 read
 back the exported weights.
