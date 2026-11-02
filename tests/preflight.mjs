@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { createDataset, buildSplits } from '../js/data/dataset.js';
+import { auditDataset } from '../js/data/preflight.js';
+import { stratifiedSplit } from '../js/data/split.js';
+
+const base = { x: Float32Array.from([1, 1, 2, 3]), xShape: [1], y: Float32Array.from([0, 1, 0, 1]), yShape: [1], task: 'binary' };
+const ds = createDataset({ ...base, splits: { train: [0, 2], val: [1], test: [3] }, source: 'imported' });
+assert.equal(ds.count, 4, 'provided splits must remain indexed to original samples');
+assert(auditDataset(ds).warnings.some(w => w.includes('Identical inputs')));
+ds.splits.test = [0];
+assert(auditDataset(ds).errors.some(w => w.includes('repeated')));
+const paired = createDataset({ x: Float32Array.from([1, 1]), x2: Float32Array.from([2, 3]), xShape: [1], y: Float32Array.from([0, 0]), yShape: [1] });
+assert.equal(paired.count, 2, 'paired samples must not be dropped based only on first input');
+const conflicts = createDataset(base);
+assert.equal(conflicts.count, 4, 'conflicting labels must not be silently removed');
+const group = createDataset({ x: Float32Array.from([1,2,3,4,5,6]), xShape: [1], y: new Float32Array(6), groups: Int32Array.from([1,1,1,1,1,1]), splitMethod: 'group' });
+buildSplits(group);
+assert.equal(group.splits.val.length, 0, 'do not split groups to fill validation');
+assert.equal(group.splits.test.length, 0);
+const strat = stratifiedSplit([0,0,0,1,1,1], [1,0,0], 2);
+assert.equal(strat.train.length, 6); assert.equal(strat.val.length, 0); assert.equal(strat.test.length, 0);
+const bad = createDataset({ ...base, dedupe: false }); bad.x[0] = NaN;
+assert(auditDataset(bad).errors.some(w => w.includes('Non-finite')));
+console.log('preflight and split checks passed');
+const three = createDataset({ x: Float32Array.from([1,2,3]), xShape: [1], y: new Float32Array(3), groups: Int32Array.from([1,2,3]), splitMethod: 'group' });
+assert.deepEqual([three.splits.train.length, three.splits.val.length, three.splits.test.length], [1,1,1]);

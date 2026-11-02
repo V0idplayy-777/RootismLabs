@@ -20,6 +20,7 @@ export const DEFAULT_TRAIN_CONFIG = {
   temperature: 0.07,
   huberDelta: 1,
   confThreshold: 0.3,
+  decisionThreshold: 0.5,
   peak: 1,
   baseline: 'input',
   frameRate: 100,
@@ -161,6 +162,7 @@ export class Trainer {
 
   async run() {
     const startedAt = Date.now();
+    const startedClock = performance.now();
     this.state = 'running';
     const cfg = this.config;
     const { k } = this.prepare();
@@ -209,15 +211,16 @@ export class Trainer {
         if (!idx.length) continue;
         const loss = this.stepBatch(idx, cfg, k);
         if (!loss || !isFinite(loss.d[0])) {
-          this.log('warn', 'non-finite loss at epoch ' + (epoch + 1) + ' step ' + s + ' — skipping batch');
-          this.model.zeroGrad();
-          continue;
+          throw new Error('Non-finite loss at epoch ' + (epoch + 1) + ', sample ' + s + '; training stopped without producing a completed model.');
         }
-        backward(loss, new Float32Array([1 / acc]));
+        // Weight each micro-batch by its sample count, including a partial final window.
+        const windowStart = Math.floor((s / cfg.batchSize) / acc) * acc * cfg.batchSize;
+        const windowSize = Math.min(acc * cfg.batchSize, order.length - windowStart);
+        backward(loss, new Float32Array([idx.length / windowSize]));
         trainLoss += loss.d[0];
         trainBatches++;
         accSteps++;
-        if (accSteps >= acc) {
+        if (accSteps >= acc || s + cfg.batchSize >= order.length) {
           const gn = cfg.gradClip > 0 ? clipGrad(params, cfg.gradClip) : gradNorm(params);
           gradSum += gn;
           gradCount++;
@@ -231,8 +234,8 @@ export class Trainer {
         if ((s / cfg.batchSize) % 8 === 0) {
           await yieldToUi();
           if (this.hooks.onProgress) {
-            const done = epoch * bpe + Math.floor(s / cfg.batchSize);
-            const elapsed = (performance.now() - startedAt) / 1000;
+            const done = stepsDone;
+            const elapsed = (performance.now() - startedClock) / 1000;
             const pct = totalSteps ? done / totalSteps : 0;
             this.hooks.onProgress({
               phase: 'train',
@@ -266,7 +269,7 @@ export class Trainer {
         lr: lrLast,
         gradNorm: gradCount ? gradSum / gradCount : 0,
         seconds: lastTrainTime,
-        samplesPerSec: lastTrainTime > 0 ? samplesSeen / Math.max(1e-9, ((performance.now() - startedAt) / 1000)) : 0,
+        samplesPerSec: lastTrainTime > 0 ? samplesSeen / Math.max(1e-9, ((performance.now() - startedClock) / 1000)) : 0,
         monitored: monitored.name,
         monitoredValue: monitored.value,
         scalars: valMetrics ? valMetrics.scalars : {},
@@ -276,7 +279,7 @@ export class Trainer {
       opt.reportPlateau(isFinite(valLoss) ? valLoss : row.trainLoss);
 
       if (cfg.checkpointBest) {
-        const improved = cfg.earlyStopping.mode === 'min'
+        const improved = ((monitored.name === 'train_loss' || monitored.name === 'val_loss') || cfg.earlyStopping.mode === 'min')
           ? monitored.value < bestValue - (cfg.earlyStopping.minDelta || 0)
           : monitored.value > bestValue + (cfg.earlyStopping.minDelta || 0);
         if (improved && isFinite(monitored.value)) {
@@ -304,7 +307,7 @@ export class Trainer {
         this.log('warn', 'early stopping at epoch ' + (epoch + 1) + ' — no improvement in ' + cfg.earlyStopping.patience + ' epochs');
         break;
       }
-      if (cfg.timeBudgetSeconds > 0 && (performance.now() - startedAt) / 1000 > cfg.timeBudgetSeconds) {
+      if (cfg.timeBudgetSeconds > 0 && (performance.now() - startedClock) / 1000 > cfg.timeBudgetSeconds) {
         this.log('warn', 'time budget of ' + cfg.timeBudgetSeconds + 's reached at epoch ' + (epoch + 1));
         break;
       }
@@ -403,6 +406,7 @@ export class Trainer {
       temperature: this.config.temperature,
       huberDelta: 1,
       confThreshold: this.config.confThreshold,
+      decisionThreshold: this.config.decisionThreshold,
       peak: this.config.peak,
       baseline: this.config.baseline,
       frameRate: this.config.frameRate
@@ -414,19 +418,18 @@ export class Trainer {
       const sub = idx.subarray(s, Math.min(idx.length, s + B));
       try {
         const l = this.task.lossFn(this.model, this.dataset, sub, taskCfg, 'eval', this.rng);
-        if (l && isFinite(l.d[0])) {
-          lossSum += l.d[0] * sub.length;
-          lossCount += sub.length;
-        }
+        if (!l || !Number.isFinite(l.d[0])) throw new Error('non-finite loss');
+        lossSum += l.d[0] * sub.length;
+        lossCount += sub.length;
       } catch (err) {
-        break;
+        throw new Error('Evaluation loss failed: ' + (err && err.message ? err.message : String(err)));
       }
     }
     let m;
     try {
       m = this.task.metrics(this.model, this.dataset, idx, taskCfg);
     } catch (err) {
-      m = { scalars: {}, error: String(err && err.message) };
+      throw new Error('Evaluation metrics failed: ' + (err && err.message ? err.message : String(err)));
     }
     m.loss = lossCount ? lossSum / lossCount : NaN;
     return m;
@@ -440,11 +443,7 @@ function resolveMonitor(cfg, task, primaryMetric, k) {
     name: preferred,
     extract(valMetrics, trainLoss) {
       if (!valMetrics || !valMetrics.scalars) return { name: 'train_loss', value: trainLoss };
-      if (valMetrics.scalars[preferred] !== undefined) return { name: preferred, value: valMetrics.scalars[preferred] };
-      const keys = Object.keys(valMetrics.scalars);
-      for (const key of keys) {
-        if (isFinite(valMetrics.scalars[key])) return { name: key, value: valMetrics.scalars[key] };
-      }
+      if (Number.isFinite(valMetrics.scalars[preferred])) return { name: preferred, value: valMetrics.scalars[preferred] };
       return { name: 'val_loss', value: valMetrics.loss };
     }
   };

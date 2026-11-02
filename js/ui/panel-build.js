@@ -4,6 +4,8 @@ import { LAYERS, LAYER_GROUPS, layerFields, defaultConfig, isLayerType } from '.
 import { analyze, blankGraph, compactNumber } from '../core/model.js';
 import { PRESET_MODEL_LIST, PRESET_FAMILIES, modelPresetByKey, buildPresetGraph, scaleToFit, budgetPosition } from '../presets/models.js';
 import { TASKS, taskFor } from '../core/tasks.js';
+import { defaultConfig as defaultTrainConfig } from './train-config.js';
+import { graphForDataset } from '../presets/from-data.js';
 import { formatBytes } from '../presets/metrics.js';
 
 export const HEADS = [
@@ -43,6 +45,7 @@ export function createBuildPanel(ctx) {
     const spec = ctx.state.graph;
     clear(toolbar);
     if (!spec) {
+      if (ctx.state.dataset) toolbar.appendChild(el('button', { text: 'Model for loaded data', onclick: () => buildForData() }));
       toolbar.appendChild(el('span', { class: 'small dim', text: 'No architecture loaded. Start from a preset, a blank graph, or a saved model.' }));
       toolbar.appendChild(el('div', { class: 'spacer' }));
       toolbar.appendChild(el('button', { text: 'Blank graph', onclick: () => startBlank() }));
@@ -55,6 +58,7 @@ export function createBuildPanel(ctx) {
     });
     toolbar.appendChild(nameInput);
     toolbar.appendChild(el('div', { class: 'vsep' }));
+    if (ctx.state.dataset) toolbar.appendChild(el('button', { class: 'sm', text: 'Model for loaded data', onclick: () => buildForData() }));
     toolbar.appendChild(el('button', { class: 'sm', text: 'Preset library', onclick: () => openGallery() }));
     toolbar.appendChild(el('button', { class: 'sm', text: 'Add layer', onclick: () => openPalette() }));
     toolbar.appendChild(el('button', { class: 'sm ghost', text: 'Auto layout', onclick: () => { if (editor) { editor.autoLayout(); ctx.touchGraph(); } } }));
@@ -69,6 +73,23 @@ export function createBuildPanel(ctx) {
     }
     toolbar.appendChild(el('button', { class: 'sm ghost', text: 'Export spec', onclick: () => download((spec.name || 'model').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.json', JSON.stringify(spec, null, 2), 'application/json') }));
     toolbar.appendChild(el('button', { class: 'sm primary', text: 'Save model', onclick: () => ctx.saveGraph() }));
+  }
+
+  function buildForData() {
+    try {
+      const spec = graphForDataset(ctx.state.dataset);
+      if (ctx.state.graph && !confirm('Replace the current architecture with a new untrained data-shaped baseline? Save it first if needed.')) return;
+      ctx.state.taskKey = ctx.state.dataset.task;
+      const config = defaultTrainConfig(ctx.state.dataset.task);
+      config.epochs = 60; config.batchSize = 16; config.seed = 7;
+      config.optimizer.name = 'adam'; config.optimizer.lr = 0.01;
+      config.schedule.name = 'constant'; config.earlyStopping.patience = 12;
+      ctx.state.trainConfig = config;
+      ctx.setSpec(spec);
+      galleryOpen = false;
+      ctx.ok('Created an untrained baseline matching the dataset. Validate it on representative held-out data.');
+      render();
+    } catch (err) { ctx.error(err.message); }
   }
 
   function startBlank() {
@@ -212,6 +233,7 @@ export function createBuildPanel(ctx) {
           el('div', { class: 'small dim', text: list.length + ' of ' + PRESET_MODEL_LIST.length + ' architectures. Each one is a graph you can fork and edit.' })
         ]),
         el('div', { class: 'row' }, [
+          ctx.state.dataset ? el('button', { text: 'Model for loaded data', onclick: () => buildForData() }) : null,
           el('button', { text: 'Blank graph', onclick: () => startBlank() }),
           el('button', { text: 'Load .json spec', onclick: () => loadSpecFile() }),
           ctx.state.graph ? el('button', { class: 'ghost', text: 'Back to editor', onclick: () => closeGallery() }) : null

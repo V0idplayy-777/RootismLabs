@@ -17,15 +17,30 @@ export function randomSplit(n, ratios, seed) {
   return cutRatios(idx, ratios);
 }
 
-function cutRatios(idx, ratios) {
+// Allocate whole units without inventing samples for zero-ratio splits. When
+// possible, reserve one unit per requested split (especially important for groups).
+function countsFor(n, ratios) {
   const r = normalizeRatios(ratios);
-  const n = idx.length;
-  const nTrain = Math.max(1, Math.round(n * r[0]));
-  const nVal = r[1] > 0 ? Math.max(1, Math.round(n * r[1])) : 0;
-  const train = Int32Array.from(idx.slice(0, nTrain));
-  const val = Int32Array.from(idx.slice(nTrain, nTrain + nVal));
-  const test = Int32Array.from(idx.slice(nTrain + nVal));
-  return { train, val, test };
+  const active = r.map((v, i) => v > 0 ? i : -1).filter(i => i >= 0);
+  const counts = [0, 0, 0];
+  if (!n || !active.length) return counts;
+  if (n >= active.length) for (const i of active) counts[i] = 1;
+  else { for (const i of active.slice(0, n)) counts[i] = 1; return counts; }
+  for (let remaining = n - active.length; remaining > 0; remaining--) {
+    let best = active[0];
+    for (const i of active) if (n * r[i] - counts[i] > n * r[best] - counts[best]) best = i;
+    counts[best]++;
+  }
+  return counts;
+}
+
+function cutRatios(idx, ratios) {
+  const [nTrain, nVal] = countsFor(idx.length, ratios);
+  return {
+    train: Int32Array.from(idx.slice(0, nTrain)),
+    val: Int32Array.from(idx.slice(nTrain, nTrain + nVal)),
+    test: Int32Array.from(idx.slice(nTrain + nVal))
+  };
 }
 
 export function normalizeRatios(ratios) {
@@ -52,15 +67,19 @@ export function stratifiedSplit(labels, ratios, seed) {
     const n = shuffled.length;
     let nTrain = Math.round(n * r[0]);
     let nVal = Math.round(n * r[1]);
-    if (n >= 3) {
+    if (n >= 3 && r.every((v) => v > 0)) {
       nTrain = Math.max(1, Math.min(n - 2, nTrain));
       nVal = Math.max(1, Math.min(n - nTrain - 1, nVal));
-    } else if (n === 2) {
+    } else if (n === 2 && r.every((v) => v > 0)) {
       nTrain = 1;
       nVal = 1;
-    } else {
+    } else if (n === 1 && r.every((v) => v > 0)) {
       nTrain = 1;
       nVal = 0;
+    } else {
+      nTrain = Math.min(n, Math.max(0, nTrain));
+      nVal = Math.min(n - nTrain, Math.max(0, nVal));
+      if (!r[2]) nVal = n - nTrain;
     }
     for (let i = 0; i < n; i++) {
       if (i < nTrain) train.push(shuffled[i]);
@@ -80,8 +99,7 @@ export function groupSplit(groups, ratios, seed) {
   const r = normalizeRatios(ratios);
   const unique = Array.from(new Set(Array.from(groups).map((g) => String(g))));
   const shuffled = shuffleArray(unique, rng);
-  const nTrain = Math.max(1, Math.round(shuffled.length * r[0]));
-  const nVal = r[1] > 0 ? Math.max(1, Math.round(shuffled.length * r[1])) : 0;
+  const [nTrain, nVal] = countsFor(shuffled.length, r);
   const assign = new Map();
   shuffled.forEach((g, i) => {
     if (i < nTrain) assign.set(g, 0);
@@ -106,8 +124,7 @@ export function groupSplit(groups, ratios, seed) {
 
 export function temporalSplit(n, ratios) {
   const r = normalizeRatios(ratios);
-  const nTrain = Math.max(1, Math.round(n * r[0]));
-  const nVal = Math.max(0, Math.round(n * r[1]));
+  const [nTrain, nVal] = countsFor(n, r);
   const train = [];
   const val = [];
   const test = [];

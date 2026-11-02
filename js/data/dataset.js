@@ -60,7 +60,8 @@ export function createDataset(opts) {
     units: opts.units || null
   };
   ds.count = ds.x ? ds.x.length / shapeSize(ds.xShape) : 0;
-  if (opts.dedupe !== false) ds.removedDuplicates = dedupeSamples(ds);
+  // Supplied splits refer to original row indices; never silently invalidate them.
+  if (opts.dedupe !== false && !opts.splits) ds.removedDuplicates = dedupeSamples(ds);
   if (!ds.splits) ds.splits = buildSplits(ds);
   ds.digest = computeDigest(ds);
   ds.stats = computeStats(ds);
@@ -116,7 +117,9 @@ export function dedupeSamples(ds) {
     }
     let dupe = false;
     for (const j of list) {
-      if (rowsIdentical(ds.x, i, j, per)) {
+      if (rowsIdentical(ds.x, i, j, per) &&
+          (!ds.x2 || rowsIdentical(ds.x2, i, j, per)) &&
+          (!ds.y || rowsIdentical(ds.y, i, j, shapeSize(ds.yShape || [1])))) {
         dupe = true;
         break;
       }
@@ -145,7 +148,10 @@ export function slugify(s) {
 }
 
 export function buildSplits(ds, method, ratios, seed) {
-  const m = method || ds.splitMethod;
+  let m = method || ds.splitMethod;
+  // Stratifying on the first continuous target (or first multilabel bit)
+  // produces misleading, often empty held-out splits.
+  if (m === 'stratified' && (!hasDiscreteLabels(ds) || shapeSize(ds.yShape || [1]) !== 1)) m = 'random';
   const r = ratios || ds.splitRatios;
   const s = seed === undefined ? ds.splitSeed : seed;
   const n = ds.count;
@@ -165,12 +171,13 @@ export function buildSplits(ds, method, ratios, seed) {
     const unique = new Set(Array.from(labels)).size;
     splits = unique > 1 && n >= 9 ? stratifiedSplit(labels, r, s) : randomSplit(n, r, s);
   }
-  if (!splits.val.length && n > 4) {
+  // Never move individual rows across groups or backwards in time to fill a split.
+  if (m !== 'group' && m !== 'temporal' && ds.splitRatios[1] > 0 && !splits.val.length && n > 4) {
     const moved = splits.train.subarray(splits.train.length - Math.max(1, Math.floor(n * 0.1)));
     splits.val = Int32Array.from(moved);
     splits.train = Int32Array.from(splits.train.subarray(0, splits.train.length - moved.length));
   }
-  if (!splits.test.length && splits.val.length > 2) {
+  if (m !== 'group' && m !== 'temporal' && ds.splitRatios[2] > 0 && !splits.test.length && splits.val.length > 2) {
     const moved = splits.val.subarray(splits.val.length - Math.max(1, Math.floor(splits.val.length / 2)));
     splits.test = Int32Array.from(moved);
     splits.val = Int32Array.from(splits.val.subarray(0, splits.val.length - moved.length));

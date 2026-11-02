@@ -93,6 +93,16 @@ export function accuracyFromMatrix(cm) {
   return total ? correct / total : 0;
 }
 
+// Wilson interval assumes independent identically distributed Bernoulli trials.
+// It does not account for clustered data, distribution shift or model selection.
+export function wilsonInterval(successes, total, z = 1.959963984540054) {
+  if (!(total > 0) || successes < 0 || successes > total) return { lower: NaN, upper: NaN };
+  const p = successes / total, z2 = z * z, den = 1 + z2 / total;
+  const center = (p + z2 / (2 * total)) / den;
+  const half = z * Math.sqrt(p * (1 - p) / total + z2 / (4 * total * total)) / den;
+  return { lower: Math.max(0, center - half), upper: Math.min(1, center + half) };
+}
+
 export function predictFromProbs(probs, k) {
   const out = new Int32Array(probs.length / k);
   for (let i = 0; i < out.length; i++) out[i] = argmaxRow(probs, i * k, k);
@@ -115,6 +125,7 @@ export function rocCurve(scores, labels, steps) {
   let fp = 0;
   let auc = 0;
   let prevFpr = 0;
+  let prevTpr = 0;
   for (let i = 0; i < pairs.length; i++) {
     if (pairs[i][1]) tp++;
     else fp++;
@@ -122,17 +133,18 @@ export function rocCurve(scores, labels, steps) {
     if (!next || next[0] !== pairs[i][0]) {
       const fpr = N ? fp / N : 0;
       const tpr = P ? tp / P : 0;
-      auc += (fpr - prevFpr) * (tpr + (P ? (tp - (pairs[i][1] ? 1 : 0)) / P : 0)) / 2;
+      auc += (fpr - prevFpr) * (tpr + prevTpr) / 2;
       prevFpr = fpr;
+      prevTpr = tpr;
       points.push({ fpr, tpr, threshold: pairs[i][0] });
     }
   }
-  points.push({ fpr: 1, tpr: 1, threshold: -1 });
+  if (P && N) points.push({ fpr: 1, tpr: 1, threshold: -1 });
   const step = Math.max(1, Math.floor(points.length / steps));
   const sampled = [];
   for (let i = 0; i < points.length; i += step) sampled.push(points[i]);
   if (sampled[sampled.length - 1] !== points[points.length - 1]) sampled.push(points[points.length - 1]);
-  return { points: sampled, auc: Math.max(0, Math.min(1, auc)), positives: P, negatives: N };
+  return { points: sampled, auc: P && N ? Math.max(0, Math.min(1, auc)) : NaN, positives: P, negatives: N };
 }
 
 export function prCurve(scores, labels, steps) {

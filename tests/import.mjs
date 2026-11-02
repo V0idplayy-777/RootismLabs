@@ -21,11 +21,11 @@ check('format detect', detectFormat('data.CSV') === 'csv' && detectFormat('a/b/c
 const ds = tableToDataset({ rows: parsed.rows, columns: parsed.columns, name: 'Sentiment' });
 check('dataset count', ds.count === 4, ds.count);
 check('dataset task', ds.task === 'binary', ds.task);
-check('dataset labels', JSON.stringify(ds.labels) === '["positive","negative"]', JSON.stringify(ds.labels));
+check('dataset labels', JSON.stringify(ds.labels) === '["negative","positive"]', JSON.stringify(ds.labels));
 check('dataset modality', ds.modality === 'text', ds.modality);
 check('x shape', JSON.stringify(ds.xShape), JSON.stringify(ds.xShape));
 check('splits', ds.splits.train.length + ds.splits.val.length + ds.splits.test.length === 4, JSON.stringify([ds.splits.train.length, ds.splits.val.length, ds.splits.test.length]));
-check('y values', Array.from(ds.y).join(',') === '0,1,0,1', Array.from(ds.y).join(','));
+check('y values', Array.from(ds.y).join(',') === '1,0,1,0', Array.from(ds.y).join(','));
 check('dropped id column', ds.importReport.droppedColumns.indexOf('id') >= 0, JSON.stringify(ds.importReport.droppedColumns));
 
 const numericRows = [];

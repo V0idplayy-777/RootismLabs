@@ -361,6 +361,10 @@ export function importView(ctx, onDone) {
   const options = {
     audioFeatures: 'kws',
     labelColumn: '',
+    groupColumn: '',
+    splitMethod: 'stratified',
+    splitRatios: '0.7,0.15,0.15',
+    splitSeed: 20260101,
     delimiter: 'auto',
     task: 'auto',
     maxSizeMb: 200
@@ -420,6 +424,10 @@ export function importView(ctx, onDone) {
     { value: 'onset', label: 'onset envelope 98 bins' }
   ], (value) => { options.audioFeatures = value; }));
   opts.appendChild(selectRow('Task', options.task, [{ value: 'auto', label: 'infer from data' }].concat(Object.keys(TASK_LABELS).map((k) => ({ value: k, label: TASK_LABELS[k] }))), (value) => { options.task = value; }));
+  opts.appendChild(textRow('Group column (tables)', options.groupColumn, 'optional: person, source or session ID', (value) => { options.groupColumn = value.trim(); }));
+  opts.appendChild(selectRow('Table split', options.splitMethod, [{ value: 'stratified', label: 'stratified / random' }, { value: 'random', label: 'random' }, { value: 'temporal', label: 'temporal (input row order)' }], (value) => { options.splitMethod = value; }));
+  opts.appendChild(selectRow('Split ratios', options.splitRatios, [{ value: '0.7,0.15,0.15', label: '70 / 15 / 15' }, { value: '0.8,0.1,0.1', label: '80 / 10 / 10' }, { value: '0.6,0.2,0.2', label: '60 / 20 / 20' }], (value) => { options.splitRatios = value; }));
+  opts.appendChild(textRow('Split seed', String(options.splitSeed), 'integer', (value) => { const n = Number(value); if (Number.isInteger(n) && n >= 0 && n <= 2147483647) options.splitSeed = n; }));
   opts.appendChild(textRow('Label column', options.labelColumn, 'blank = infer', (value) => { options.labelColumn = value; }));
   opts.appendChild(selectRow('Delimiter', options.delimiter, [{ value: 'auto', label: 'auto-detect' }, { value: ',', label: 'comma' }, { value: '\t', label: 'tab' }, { value: ';', label: 'semicolon' }, { value: '|', label: 'pipe' }], (value) => { options.delimiter = value; }));
   host.appendChild(opts);
@@ -438,6 +446,10 @@ export function importView(ctx, onDone) {
             audioFeatures: options.audioFeatures,
             task: options.task === 'auto' ? null : options.task,
             labelColumn: options.labelColumn || null,
+            groupColumn: options.groupColumn || null,
+            splitMethod: options.splitMethod,
+            splitRatios: options.splitRatios.split(',').map(Number),
+            splitSeed: options.splitSeed,
             delimiter: options.delimiter === 'auto' ? null : options.delimiter
           });
           for (const problem of result.problems || []) ctx.warn('Import: ' + problem);

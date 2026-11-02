@@ -192,6 +192,7 @@ function trainingBlock(run, dataset) {
     temperature: cfg.temperature,
     huberDelta: cfg.huberDelta,
     confThreshold: cfg.confThreshold,
+    decisionThreshold: cfg.decisionThreshold,
     ema: cfg.ema,
     emaDecay: cfg.emaDecay,
     balancedSampler: cfg.balancedSampler,
@@ -305,14 +306,14 @@ export function limitationLines(card) {
     if (ds.samples <= 400) lines.push('Trained on ' + ds.samples + ' examples. Every metric in this card has a wide confidence interval; treat differences below a few points as noise.');
     if (ds.splits && ds.splits.test && ds.splits.test < 30) lines.push('The held-out test split has only ' + ds.splits.test + ' examples, so test-set numbers are indicative rather than conclusive.');
     if (ds.stats && ds.stats.imbalanceRatio && ds.stats.imbalanceRatio > 5) lines.push('Class imbalance of ' + ds.stats.imbalanceRatio.toFixed(1) + 'x between the largest and smallest class. Per-class recall on the rare classes is the number to watch, not overall accuracy.');
-    if (ds.source === 'generated' || ds.presetKey) lines.push('The training data was synthesised locally for development. Re-train on your own labelled data before relying on this model in production.');
-    if (ds.license && ds.license.allowsCommercial === false) lines.push('Dataset licence "' + ds.license.name + '" does not permit commercial use. The weights inherit that restriction unless you re-train on cleared data.');
+    if (ds.source === 'generated' || ds.source === 'preset' || ds.presetKey) lines.push('The training data was synthesised locally for development. Re-train on your own labelled data before relying on this model in production.');
+    if (ds.license && ds.license.allowsCommercial === false) lines.push('Commercial rights for dataset licence "' + ds.license.name + '" are unconfirmed or restricted; review the actual terms and applicable obligations before use.');
     if (ds.provenance && ds.provenance.reference && ds.provenance.reference.license && ds.provenance.reference.license.allowsCommercial === false) {
       lines.push('The reference corpus behind this preset (' + ds.provenance.reference.name + ') is not cleared for commercial use. The generated stand-in data is CC0, but a production model needs real data with real rights.');
     }
   }
   const t = card.model.task;
-  if (t === 'binary' || t === 'frame_binary') lines.push('The operating threshold is a product decision, not a training artefact. The FAR/FRR sweep in the results section is the place to pick it.');
+  if (t === 'binary' || t === 'frame_binary') lines.push('The operating threshold is a product decision, not a training artefact. Choose it on validation data, then assess it once on independent test data.');
   if (t === 'detection') lines.push('Box regression is the weak part of small detectors. Objectness scores are usually well calibrated long before the coordinates are accurate.');
   if (t === 'spectral_mask') lines.push('Mask-based audio enhancement removes stationary noise well and musical noise badly. Listen to the output before shipping it.');
   if (t === 'lm') lines.push('A character or byte level model of this size produces fluent local structure and unreliable long-range facts. Do not use it as a knowledge source.');

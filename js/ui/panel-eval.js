@@ -96,11 +96,12 @@ export function createEvalPanel(ctx) {
         focalGamma: 2,
         temperature: rec.config.temperature || 0.07,
         huberDelta: 1,
-        confThreshold: rec.config.confThreshold || 0.3,
+        confThreshold: rec.config.confThreshold ?? 0.3,
+        decisionThreshold: rec.config.decisionThreshold ?? 0.5,
         peak: rec.config.peak || 1,
         baseline: rec.config.baseline || 'input',
         frameRate: rec.config.frameRate || 100
-      }, threshold !== null ? { confThreshold: threshold } : {});
+      }, threshold !== null ? { confThreshold: threshold, decisionThreshold: threshold } : {});
       const metrics = task.metrics(model, info.ds, idx, taskCfg);
       let loss = NaN;
       try {
@@ -301,6 +302,7 @@ export function createEvalPanel(ctx) {
     return el('div', { class: 'panel' }, [
       el('div', { class: 'panel-head' }, [el('h3', { text: 'Confusion matrix' }), el('div', { class: 'spacer' }), el('span', { class: 'tiny faint', text: n + ' classes · ' + total + ' samples · ' + (100 * offDiagonal / Math.max(1, total)).toFixed(1) + '% misclassified' })]),
       el('div', { class: 'panel-body tight' }, [
+        split === 'test' ? el('div', { class: 'callout warn', text: 'Do not choose a threshold from the test split. Use validation data for threshold selection, then evaluate once on an untouched test set.' }) : null,
         canvas,
         el('div', { class: 'tiny faint mt4', text: 'Rows are the true class, columns the prediction. Cells are normalised by row so an unbalanced dataset still shows where each class goes.' }),
         el('div', { class: 'row gap4 mt8' }, [
@@ -347,6 +349,7 @@ export function createEvalPanel(ctx) {
     return el('div', { class: 'panel' }, [
       el('div', { class: 'panel-head' }, [el('h3', { text: 'Calibration' }), el('div', { class: 'spacer' }), el('span', { class: 'mono tiny', text: 'ECE ' + cal.ece.toFixed(4) + ' · MCE ' + cal.mce.toFixed(4) + ' · Brier ' + cal.brier.toFixed(4) + ' · log loss ' + cal.logLoss.toFixed(4) })]),
       el('div', { class: 'panel-body tight' }, [
+        split === 'test' ? el('div', { class: 'callout warn', text: 'Do not choose a threshold from the test split. Use validation data for threshold selection, then evaluate once on an untouched test set.' }) : null,
         canvas,
         el('div', { class: 'callout mt8 ' + (cal.ece < 0.08 ? 'good' : 'warn'), text: verdict }),
         el('div', { class: 'scroll', style: { maxHeight: '180px' } }, [
@@ -432,6 +435,7 @@ export function createEvalPanel(ctx) {
     return el('div', { class: 'panel' }, [
       el('div', { class: 'panel-head' }, [el('h3', { text: isDetection ? 'Confidence sweep' : 'Threshold sweep' }), el('div', { class: 'spacer' }), el('span', { class: 'tiny faint', text: 'best F1 at ' + sweep[bestIndex].threshold.toFixed(2) })]),
       el('div', { class: 'panel-body tight' }, [
+        split === 'test' ? el('div', { class: 'callout warn', text: 'Do not choose a threshold from the test split. Use validation data for threshold selection, then evaluate once on an untouched test set.' }) : null,
         canvas,
         controls,
         el('div', { class: 'scroll mt8', style: { maxHeight: '230px' } }, [table]),
@@ -639,7 +643,7 @@ export function createEvalPanel(ctx) {
         canvas
       ]));
     } else if (task.key === 'binary') {
-      host.appendChild(el('div', { class: 'callout', text: 'Score ' + activated[0].toFixed(4) + ' · true label ' + (labelOf(ds, index) || (y ? y[0].toFixed(2) : '—')) + (metrics && metrics.scalars && metrics.scalars.best_threshold !== undefined ? ' · best threshold ' + metrics.scalars.best_threshold.toFixed(3) : '') }));
+      host.appendChild(el('div', { class: 'callout', text: 'Score ' + activated[0].toFixed(4) + ' · true label ' + (labelOf(ds, index) || (y ? y[0].toFixed(2) : '—')) + (metrics && metrics.scalars && metrics.scalars.best_threshold !== undefined ? ' · decision threshold ' + metrics.scalars.best_threshold.toFixed(3) : '') }));
     } else {
       const limit = Math.min(24, activated.length);
       host.appendChild(el('div', { class: 'kv' }, [

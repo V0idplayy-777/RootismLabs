@@ -2,6 +2,8 @@ import { zipWrite, zipRead, zipGet, zipVerify } from '../core/zip.js';
 import { sha256, sha256Text } from '../core/hash.js';
 import { cardFiles, cardToMarkdown, CARD_VERSION, TOOL_NAME, TOOL_VERSION } from './card.js';
 import { datasetToRows, qualityReport } from '../data/dataset.js';
+import { transformTableRow } from '../data/import.js';
+import { DEFAULT_TEXT_SPEC, hash32, normalizeText, tokenizeWords, charNgrams, wordNgrams, hashFeatures, normalizeVector } from '../data/text.js';
 import { formatBytes } from '../presets/metrics.js';
 
 export const BUNDLE_VERSION = 2;
@@ -66,6 +68,16 @@ export function artifactEntries(artifact) {
     out.push({ name: layout.dir + '/' + (f.name || layout.stem + '_' + i + layout.ext), data: toBytes(f.data) });
   }
   return out;
+}
+
+// Standalone ESM for the exact table transform; no browser workspace needed.
+export function tablePreprocessingModule(spec) {
+  const funcs = [hash32, normalizeText, tokenizeWords, charNgrams, wordNgrams, hashFeatures, normalizeVector, transformTableRow];
+  return '// Rootism Labs table preprocessing. Model input is the resulting float32 vector.\n' +
+    'const DEFAULT_TEXT_SPEC = ' + JSON.stringify(DEFAULT_TEXT_SPEC) + ';\n' +
+    funcs.map(fn => fn.toString()).join('\n\n') +
+    '\nexport const featureSpec = ' + JSON.stringify(spec) + ';\n' +
+    'export function preprocess(row) { return transformTableRow(row, featureSpec); }\n';
 }
 
 export function datasetEntries(dataset, options) {
@@ -167,6 +179,12 @@ export function buildBundle(input) {
   if (card && card.model && card.model.layers) {
     const labels = card.dataset && card.dataset.labels ? card.dataset.labels : [];
     if (labels.length) push({ name: 'labels.txt', data: labels.join('\n') + '\n' });
+  }
+
+  const featureSpec = (opts.dataset && opts.dataset.featureSpec) || (card && card.dataset && card.dataset.featureSpec);
+  if (featureSpec && featureSpec.kind === 'table') {
+    push({ name: 'preprocessing/table.mjs', data: tablePreprocessingModule(featureSpec) });
+    push({ name: 'preprocessing/feature-spec.json', data: json(featureSpec) });
   }
 
   for (const artifact of opts.artifacts || []) {
