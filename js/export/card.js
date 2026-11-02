@@ -299,6 +299,9 @@ export function usageSnippets(card) {
 export function limitationLines(card) {
   const lines = [];
   const info = card.model;
+  if (card.compliance) {
+    lines.push('Regulatory status — ' + card.compliance.label + '. ' + card.compliance.notice);
+  }
   if (info.params <= 60000) lines.push('At ' + info.params.toLocaleString('en-US') + ' parameters this model has very little capacity. It learns the pattern in the training distribution and generalises poorly to inputs that look different.');
   else if (info.params <= 400000) lines.push('At ' + info.params.toLocaleString('en-US') + ' parameters the model is deliberately small. Expect it to fail on out-of-distribution inputs rather than degrade gracefully.');
   const ds = card.dataset;
@@ -369,11 +372,23 @@ export function buildModelCard(input) {
     description: opts.description || (spec && spec.meta && spec.meta.description) || ''
   };
 
+  const presetMeta = (spec && spec.meta) || {};
+  const compliance = opts.compliance || presetMeta.compliance || null;
+  const notes = (opts.notes || []).slice();
+  for (const note of presetMeta.notes || []) {
+    if (notes.indexOf(note) < 0) notes.push(note);
+  }
+
   const card = {
     cardVersion: CARD_VERSION,
     generatedAt: opts.generatedAt || Date.now(),
     tool: { name: TOOL_NAME, version: TOOL_VERSION, runtime: typeof window !== 'undefined' && typeof document !== 'undefined' ? 'browser' : 'node' },
     model,
+    compliance: compliance ? {
+      status: compliance.status || 'regulated',
+      label: compliance.label || 'Regulated use',
+      notice: compliance.notice || ''
+    } : null,
     dataset: datasetBlock(dataset),
     training: trainingBlock(run, dataset),
     results: {
@@ -399,7 +414,7 @@ export function buildModelCard(input) {
       samplesSeen: run ? run.samplesSeen : null,
       userAgent: typeof navigator === 'undefined' ? null : String(navigator.userAgent || '')
     },
-    notes: (opts.notes || []).slice()
+    notes
   };
   card.limitations = limitationLines(card);
   card.usage = usageSnippets(card);
@@ -426,6 +441,13 @@ export function cardToMarkdown(card) {
   L.push('');
   if (card.model.description) {
     L.push(card.model.description);
+    L.push('');
+  }
+
+  if (card.compliance) {
+    L.push('## Regulatory status');
+    L.push('');
+    L.push('**' + card.compliance.label + '.** ' + card.compliance.notice);
     L.push('');
   }
 

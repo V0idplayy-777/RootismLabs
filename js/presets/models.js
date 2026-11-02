@@ -79,12 +79,12 @@ export const PRESET_MODELS = {
     nodes: [
       ['reshape', { shape: '96,1' }],
       ['embedding', { vocab: 160, dim: 24 }],
-      ['conv1d', { filters: 48, kernel: 3 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
       ['dropout', { rate: 0.2 }],
-      ['conv1d', { filters: 48, kernel: 3 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
       ['dense', { units: 15, activation: 'linear' }]
     ],
-    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adamw', lr: 0.006, weightDecay: 0.0005 }, labelSmoothing: 0.05 },
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.02, weightDecay: 0.0005 }, labelSmoothing: 0 },
     budget: { target: 30000, min: 8000, max: 150000 },
     reference: { params: [10000000, 350000000], note: 'Production PII pipelines use a fine-tuned transformer; the character-window convolution here is the small-model alternative that still catches malformed identifiers.' }
   },
@@ -369,7 +369,7 @@ Object.assign(PRESET_MODELS, {
     dataset: 'segmentation',
     tagline: 'Encoder-decoder with one upsample stage',
     description: 'Pool down, widen, upsample back, refine. The loss is half binary cross-entropy and half Dice, because foreground is a minority of pixels and cross-entropy alone settles for predicting background everywhere. Boundary AUC is reported separately from IoU: a model can find the object and still have soft edges.',
-    input: [3, 32, 32],
+    input: [3, 48, 48],
     inputName: 'image',
     head: 'heatmap',
     nodes: [
@@ -580,12 +580,667 @@ Object.assign(PRESET_MODELS, {
   }
 });
 
+Object.assign(PRESET_MODELS, {
+  tickets: {
+    key: 'tickets',
+    name: 'Support ticket router',
+    family: 'text',
+    task: 'multilabel',
+    dataset: 'tickets',
+    tagline: 'Ticket text to team and priority tags',
+    description: 'Nine sigmoid outputs over one ticket: five owning teams and four priorities, with the two drawn independently so neither can be inferred from the other. Routing is the cheapest automation in a helpdesk and the first one a support lead asks for, so the evaluation reports per-label precision and recall rather than a single accuracy.',
+    input: [768],
+    inputName: 'ticket_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 128 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 64 }],
+      ['dense', { units: 9, activation: 'linear' }]
+    ],
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 125000, min: 20000, max: 600000 },
+    reference: { params: [1000000, 8000000], note: 'Production ticket routers are fine-tuned encoders; a hashed-feature head is what a team ships first.' }
+  },
+  addresses: {
+    key: 'addresses',
+    name: 'Address parser',
+    family: 'text',
+    task: 'seq_tag',
+    dataset: 'addresses',
+    tagline: 'Free-text address to street, unit, city, postcode',
+    description: 'Character-level BIO tagging over unit, street, city and postcode. Units are optional and city-first and postcode-first ordering both appear, so punctuation alone cannot split the fields. Character input means an unseen house number or postcode format is still readable rather than an unknown token.',
+    input: [80],
+    inputName: 'char_ids',
+    head: 'softmax-seq',
+    nodes: [
+      ['reshape', { shape: '80,1' }],
+      ['embedding', { vocab: 160, dim: 24 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
+      ['dropout', { rate: 0.15 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
+      ['dense', { units: 9, activation: 'linear' }]
+    ],
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.02, weightDecay: 0.0005 }, labelSmoothing: 0 },
+    budget: { target: 16000, min: 4000, max: 250000 },
+    reference: { params: [1000000, 20000000], note: 'Production address parsers are sequence models over word pieces; a character convolution is the sub-100K alternative.' }
+  },
+  reviews: {
+    key: 'reviews',
+    name: 'Review aspect tagger',
+    family: 'text',
+    task: 'multilabel',
+    dataset: 'reviews',
+    tagline: 'Review to price, delivery, quality and support',
+    description: 'Four independent aspects per review. Reviews frequently mention two at once and the frequent aspects dominate the label set, which is why macro F1 sits next to micro F1: an aspect tagger that quietly drops support will look fine on micro and wrong on the dashboard it feeds.',
+    input: [640],
+    inputName: 'review_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 96 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 48 }],
+      ['dense', { units: 4, activation: 'linear' }]
+    ],
+    train: { epochs: 16, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 65000, min: 12000, max: 400000 },
+    reference: { params: [500000, 5000000], note: 'CX stacks usually run aspect extraction on a small transformer; this head fits the same output contract.' }
+  },
+  voicemail: {
+    key: 'voicemail',
+    name: 'Answering-machine detector',
+    family: 'audio',
+    task: 'binary',
+    dataset: 'voicemail',
+    tagline: 'First three seconds to human or machine',
+    description: 'Log-mel frames from the opening three seconds of an outbound call, reduced by two strided convolutions and a recurrent layer to one decision. Machine greetings are flat in loudness and often end in a beep; people pause and vary. Outbound dialers pay for this because a wasted agent minute is a direct cost.',
+    input: [74, 32],
+    inputName: 'log_mel',
+    head: 'sigmoid',
+    nodes: [
+      ['conv1d', { filters: 24, kernel: 3 }],
+      ['conv1d', { filters: 32, kernel: 3, stride: 2 }],
+      ['gru', { units: 32, returnSeq: false }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 }, decisionThreshold: 0.5 },
+    budget: { target: 12000, min: 4000, max: 150000 },
+    reference: { params: [100000, 1000000], note: 'Commercial AMD runs on DSP-sized models inside the media gateway; this is the same shape at browser scale.' }
+  },
+  fall: {
+    key: 'fall',
+    name: 'Fall detector',
+    family: 'sensor',
+    task: 'binary',
+    dataset: 'fall',
+    tagline: 'Wrist or pendant IMU window to fall or no fall',
+    description: 'Triaxial accelerometer windows classified by strided convolutions over time and global average pooling. The fall class is fifteen percent of the data, so accuracy is meaningless: the numbers that matter are recall on falls and the false-alarm rate at night, because a pendant that cries wolf gets taken off.',
+    input: [96, 3],
+    inputName: 'imu_window',
+    head: 'sigmoid',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 5, stride: 2 }],
+      ['conv1d', { filters: 24, kernel: 3 }],
+      ['globalavgpool1d', {}],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 24, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, decisionThreshold: 0.4 },
+    budget: { target: 2500, min: 800, max: 120000 },
+    reference: { params: [20000, 300000], note: 'Wearable fall detectors ship in the tens of thousands of parameters; a wider stack here walks towards that budget.' }
+  },
+  smartmeter: {
+    key: 'smartmeter',
+    name: 'Smart-meter load forecaster',
+    family: 'series',
+    task: 'forecast',
+    dataset: 'smartmeter',
+    tagline: 'Hourly kWh plus calendar features to 24 hours',
+    description: 'Convolution over the history window, then a recurrent layer that emits the whole 24-hour horizon in one pass. Hour-of-day sine and cosine and a weekend flag are supplied as channels, so the model can read the calendar without memorising clock arithmetic. A persistence baseline is reported next to it because last-value forecasting is genuinely hard to beat on load.',
+    input: [48, 4],
+    inputName: 'history',
+    head: 'linear',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 3 }],
+      ['gru', { units: 24, returnSeq: false }],
+      ['dense', { units: 24, activation: 'linear' }]
+    ],
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 0.2 },
+    budget: { target: 4000, min: 1000, max: 120000 },
+    reference: { params: [10000, 2000000], note: 'Utility load forecasting runs from small gradient-boosted trees to DeepAR; a 48-hour input and 24-hour output fits far smaller.' }
+  },
+  doctypes: {
+    key: 'doctypes',
+    name: 'Document type classifier',
+    family: 'documents',
+    task: 'multiclass',
+    dataset: 'doctypes',
+    tagline: 'Page thumbnail to invoice, receipt, ID, contract, other',
+    description: 'A strided convolution trunk with global average pooling and a five-way head. The first step of any intake pipeline: everything after it is a different parser, so a misroute costs the whole document. Page rotation, blur and scan noise are present in the training data because the alternative is a model that only works on clean exports.',
+    input: [3, 32, 32],
+    inputName: 'image',
+    head: 'softmax',
+    nodes: [
+      ['conv2d', { filters: 12, kernel: 3, stride: 2 }],
+      ['conv2d', { filters: 16, kernel: 3, stride: 2 }],
+      ['conv2d', { filters: 24, kernel: 3 }],
+      ['globalavgpool2d', {}],
+      ['dense', { units: 5, activation: 'linear' }]
+    ],
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 5000, min: 1500, max: 300000 },
+    reference: { params: [2000000, 30000000], note: 'Production page classifiers are MobileNet or ViT backbones; the output contract is identical.' }
+  },
+  receiptfields: {
+    key: 'receiptfields',
+    name: 'Receipt and invoice field tagger',
+    family: 'documents',
+    task: 'seq_tag',
+    dataset: 'receiptfields',
+    tagline: 'OCR tokens to vendor, date, total and tax ID',
+    description: 'Token-level BIO tagging with an embedding, two convolutions and a per-token head. Position is a strong cue — vendors sit near the top, the total near the bottom — and neighbouring token shapes disambiguate a date from a phone number. Runs directly on OCR output, before any layout model.',
+    input: [40],
+    inputName: 'token_ids',
+    head: 'softmax-seq',
+    nodes: [
+      ['reshape', { shape: '40,1' }],
+      ['embedding', { vocab: 243, dim: 24 }],
+      ['conv1d', { filters: 40, kernel: 3 }],
+      ['conv1d', { filters: 40, kernel: 3 }],
+      ['dense', { units: 9, activation: 'linear' }]
+    ],
+    train: { epochs: 60, batchSize: 32, optimizer: { name: 'adamw', lr: 0.03, weightDecay: 0.0004 }, labelSmoothing: 0 },
+    budget: { target: 14000, min: 4000, max: 200000 },
+    reference: { params: [1000000, 50000000], note: 'LayoutLM-class models are large; a token tagger is the cheap baseline that also tells you whether layout is needed.' }
+  },
+  skew: {
+    key: 'skew',
+    name: 'Skew and orientation estimator',
+    family: 'documents',
+    task: 'regression',
+    dataset: 'skew',
+    tagline: 'Scan to rotation angle in degrees',
+    description: 'A convolutional stack that pools a grayscale page down to a single angle in degrees. The mean absolute error is in degrees, which is the unit a deskew step consumes. Scanning pipelines need this before OCR: a couple of degrees is enough to break line segmentation, and a document that arrives at ninety degrees is a different problem entirely.',
+    input: [1, 32, 32],
+    inputName: 'scan',
+    head: 'linear',
+    nodes: [
+      ['conv2d', { filters: 16, kernel: 3 }],
+      ['maxpool2d', { kernel: 2, stride: 2 }],
+      ['conv2d', { filters: 24, kernel: 3 }],
+      ['maxpool2d', { kernel: 2, stride: 2 }],
+      ['conv2d', { filters: 32, kernel: 3 }],
+      ['globalavgpool2d', {}],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 26, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 2 },
+    budget: { target: 12000, min: 3000, max: 150000 },
+    reference: { params: [100000, 2000000], note: 'Classical Hough-transform deskew is still competitive; a network is worth it when the page is noisy or cropped.' }
+  },
+  signatures: {
+    key: 'signatures',
+    name: 'Signature and stamp detector',
+    family: 'documents',
+    task: 'detection',
+    dataset: 'signatures',
+    tagline: 'Page to signature or stamp boxes',
+    description: 'A single-shot detector over a small page grid: objectness in one channel and box centre and size in the rest. Used for compliance checks on signed forms, where the question is usually "is there anything here at all" and a human reviews the crop. A fifth of the pages are blank so the objectness channel is measured against real negatives.',
+    input: [3, 32, 32],
+    inputName: 'image',
+    head: 'det',
+    nodes: [
+      ['conv2d', { filters: 24, kernel: 3, stride: 2 }],
+      ['conv2d', { filters: 32, kernel: 3, stride: 2 }],
+      ['conv2d', { filters: 32, kernel: 3 }],
+      ['conv2d', { filters: 5, kernel: 3, activation: 'linear' }]
+    ],
+    train: { epochs: 45, batchSize: 16, optimizer: { name: 'adam', lr: 0.008 }, coordScale: 8, confThreshold: 0.3 },
+    budget: { target: 18000, min: 5000, max: 400000 },
+    reference: { params: [100000, 500000], note: 'BlazeFace-sized detectors are the usual starting point; box regression is the part that needs the parameters.' }
+  },
+  cardfraud: {
+    key: 'cardfraud',
+    name: 'Card fraud scorer',
+    family: 'finance',
+    task: 'binary',
+    dataset: 'cardfraud',
+    tagline: 'Transaction features to fraud probability',
+    description: 'A compact scorer over twelve transaction features with a decision threshold derived from cost, not from habit: a missed fraud costs about twenty-four times a false alert in this preset, so the threshold sits far below 0.5 and precision and recall are reported at that operating point. The threshold only means something if the scores are calibrated, which the ECE and Brier numbers are there to check.',
+    input: [12],
+    inputName: 'transaction_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 64 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 32 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 26, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 }, decisionThreshold: 0.04 },
+    budget: { target: 3500, min: 800, max: 90000 },
+    reference: { params: [50000, 5000000], note: 'Real fraud stacks combine gradient-boosted trees, rules and graph features; the scorer is one signal among many.' },
+    notes: [
+      'The decision threshold of 0.04 is cost-weighted: with a false alert costing 5 and a missed fraud costing 120, the cost-optimal cut for a calibrated probability is 5 / (5 + 120). Change the ratio in the dataset provenance and recompute it rather than reusing this number.',
+      'Calibration is part of the contract. Compare ECE and the Brier score across runs and recalibrate on a validation slice before using the probability in a rule.'
+    ]
+  },
+  creditrisk: {
+    key: 'creditrisk',
+    name: 'Default risk scorecard',
+    family: 'finance',
+    task: 'binary',
+    dataset: 'creditrisk',
+    tagline: 'Applicant features to probability of default',
+    description: 'A small scorecard over fourteen applicant and loan features. It is deliberately shallow: in a regulated credit decision the ability to explain a decline matters as much as the AUC, and a two-layer network over a documented feature list is close to the limit of what can be justified to a reviewer. Calibration, not ranking alone, decides whether the probability can be compared with an acceptance policy.',
+    input: [14],
+    inputName: 'applicant_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 64 }],
+      ['dropout', { rate: 0.25 }],
+      ['dense', { units: 32 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 28, batchSize: 32, optimizer: { name: 'adamw', lr: 0.005, weightDecay: 0.0004 }, decisionThreshold: 0.14 },
+    budget: { target: 4500, min: 1000, max: 120000 },
+    reference: { params: [100000, 10000000], note: 'Banks run logistic scorecards and monotonic gradient boosting; a neural scorer is a challenger model, not the incumbent.' },
+    compliance: {
+      status: 'regulated',
+      label: 'Regulated credit decision',
+      notice: 'A model that contributes to a credit decision is subject to fair-lending and consumer-credit rules, model risk management guidance and adverse-action requirements. Before any use, document the feature set and its lawful basis, test for disparate impact across protected groups, record reason codes for every decline, keep an auditable version history and put a human review path in place. A passing AUC on synthetic data satisfies none of that.'
+    },
+    notes: [
+      'The operating point is a policy decision, not 0.5: at the 8% default rate in this data, a false negative (a default that slips through) is worth roughly six false positives (a good applicant declined). That cost ratio puts the decision threshold near 0.14, which is what this preset uses.',
+      'Calibrate before use: monitor ECE and the Brier score, and recalibrate on a recent validation slice whenever the applicant mix changes.',
+      'The training data here is synthetic. Replacing it with real applications requires consent, retention limits and a documented disproportionality review.'
+    ]
+  },
+  merchants: {
+    key: 'merchants',
+    name: 'Transaction categorizer',
+    family: 'finance',
+    task: 'multiclass',
+    dataset: 'merchants',
+    tagline: 'Raw merchant string to spend category',
+    description: 'Hashed character and word n-grams of the raw card descriptor into twelve spend categories. Descriptors are messy by construction — processor prefixes, store numbers, city suffixes, truncation — and the model has to read shapes rather than match a merchant list, because the next merchant is one it has never seen.',
+    input: [640],
+    inputName: 'descriptor_features',
+    head: 'softmax',
+    nodes: [
+      ['dense', { units: 128 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 64 }],
+      ['dense', { units: 12, activation: 'linear' }]
+    ],
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 90000, min: 15000, max: 500000 },
+    reference: { params: [200000, 5000000], note: 'Real categorisers blend the descriptor with MCC codes and merchant graphs; the descriptor head is the part that handles new merchants.' }
+  },
+  latepayment: {
+    key: 'latepayment',
+    name: 'Late-payment predictor',
+    family: 'finance',
+    task: 'regression',
+    dataset: 'latepayment',
+    tagline: 'Invoice features to days late',
+    description: 'A regression head over invoice and customer features with a Huber loss, because the interesting cases are a long way from zero and squared error would let the on-time majority dominate. Collections teams rank by predicted lateness rather than predict a precise number of days, so the tail error and the ordering matter more than MAE.',
+    input: [12],
+    inputName: 'invoice_features',
+    head: 'linear',
+    nodes: [
+      ['dense', { units: 48 }],
+      ['dense', { units: 24 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 28, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 8 },
+    budget: { target: 1800, min: 500, max: 60000 },
+    reference: { params: [10000, 200000], note: 'Credit teams often use a two-stage model: probability of any lateness, then days given late.' }
+  },
+  injection: {
+    key: 'injection',
+    name: 'Prompt-injection filter',
+    family: 'security',
+    task: 'binary',
+    dataset: 'injection',
+    tagline: 'User input to injection or clean',
+    description: 'A cheap pre-filter over hashed word and character n-grams, small enough to run before the model it is protecting. It catches instruction overrides, roleplay escapes, fake system messages and encoded payloads that look different from ordinary requests. It is one layer: a filter trained on published attacks has a short half-life and belongs next to output-side controls, not instead of them.',
+    input: [768],
+    inputName: 'input_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 96 }],
+      ['dropout', { rate: 0.25 }],
+      ['dense', { units: 48 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 22, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, decisionThreshold: 0.45 },
+    budget: { target: 80000, min: 15000, max: 400000 },
+    reference: { params: [1000000, 50000000], note: 'Dedicated injection classifiers are fine-tuned encoders; a hashed n-gram filter is what fits in front of every request without a latency budget.' }
+  },
+  phishing: {
+    key: 'phishing',
+    name: 'Phishing URL classifier',
+    family: 'security',
+    task: 'binary',
+    dataset: 'phishing',
+    tagline: 'Hashed character n-grams of a URL',
+    description: 'Hashed character n-grams of the whole URL, so there is no host list to keep current and no vocabulary to ship. Lookalike brands, raw IP hosts, credential-in-subdomain tricks and long random tokens all leave different shapes. URLs are adversarial and short-lived: retrain on a rolling window and hold out a later time slice.',
+    input: [768],
+    inputName: 'url_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 96 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 48 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, decisionThreshold: 0.5 },
+    budget: { target: 78000, min: 15000, max: 400000 },
+    reference: { params: [500000, 20000000], note: 'Mail gateways combine URL models with reputation, sandboxing and a blocklist, because none of them is sufficient alone.' }
+  },
+  dga: {
+    key: 'dga',
+    name: 'DGA domain detector',
+    family: 'security',
+    task: 'binary',
+    dataset: 'dga',
+    tagline: 'Domain string to generated or legitimate',
+    description: 'Character n-grams of the domain alone, which a resolver can compute without a reputation lookup. Random-letter, hex and pronounceable generators look different from each other, and a dictionary-concatenation family looks almost legitimate. Hold out whole DGA families for evaluation, not random rows.',
+    input: [512],
+    inputName: 'domain_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 64 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 32 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, decisionThreshold: 0.5 },
+    budget: { target: 36000, min: 8000, max: 300000 },
+    reference: { params: [200000, 5000000], note: 'Network security stacks combine a DGA model with NXDOMAIN rates and beaconing detection.' }
+  },
+  secrets: {
+    key: 'secrets',
+    name: 'Secret leak tagger',
+    family: 'security',
+    task: 'seq_tag',
+    dataset: 'secrets',
+    tagline: 'Code or log lines to API key and token spans',
+    description: 'Character-level BIO tagging for API keys, bearer tokens, hard-coded passwords and private-key headers. Character input fires on key formats no word vocabulary has seen, which matters because the whole point is to catch something the model has not been shown. CI runs it before a commit reaches history; a hit is a real leak, so the output belongs in a revocation runbook.',
+    input: [96],
+    inputName: 'char_ids',
+    head: 'softmax-seq',
+    nodes: [
+      ['reshape', { shape: '96,1' }],
+      ['embedding', { vocab: 160, dim: 24 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
+      ['dropout', { rate: 0.2 }],
+      ['conv1d', { filters: 48, kernel: 5 }],
+      ['dense', { units: 9, activation: 'linear' }]
+    ],
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.02, weightDecay: 0.0005 }, labelSmoothing: 0 },
+    budget: { target: 16000, min: 5000, max: 250000 },
+    reference: { params: [1000000, 20000000], note: 'Secret scanners in CI are usually entropy heuristics plus regexes; a learned tagger adds recall on formatted keys.' }
+  },
+  bearing: {
+    key: 'bearing',
+    name: 'Bearing fault classifier',
+    family: 'industrial',
+    task: 'multiclass',
+    dataset: 'bearing',
+    tagline: 'Vibration spectrum to healthy, inner, outer or ball fault',
+    description: 'A classifier over the mean log power spectrum, which is what an FFT front end already produces, so the model adds the decision rather than the transform. Inner-race and outer-race faults put impulses at different characteristic frequencies and the ball fault modulates at the cage frequency, so the spectrum is genuinely separable — until speed and load change, which this generator holds fixed.',
+    input: [128],
+    inputName: 'spectrum',
+    head: 'softmax',
+    nodes: [
+      ['dense', { units: 96 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 48 }],
+      ['dense', { units: 4, activation: 'linear' }]
+    ],
+    train: { epochs: 22, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 19000, min: 4000, max: 200000 },
+    reference: { params: [100000, 5000000], note: 'Condition-monitoring products combine envelope spectra, order tracking and a classifier; the classifier is the small part.' }
+  },
+  rul: {
+    key: 'rul',
+    name: 'Remaining useful life estimator',
+    family: 'industrial',
+    task: 'regression',
+    dataset: 'rul',
+    tagline: 'Sensor window to cycles left',
+    description: 'Convolutions over a four-channel sensor window, pooled and regressed to cycles remaining. The target is not a label anybody records; it is constructed from run-to-failure histories, which is why simulated degradation is the usual starting point and why splitting by unit rather than by window is essential on real data.',
+    input: [32, 4],
+    inputName: 'sensor_window',
+    head: 'linear',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 5, stride: 2 }],
+      ['conv1d', { filters: 24, kernel: 3 }],
+      ['globalavgpool1d', {}],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 28, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 12 },
+    budget: { target: 1800, min: 500, max: 120000 },
+    reference: { params: [50000, 2000000], note: 'C-MAPSS baselines are LSTMs and temporal convolutions of 50K to 1M parameters; a maintenance window rarely justifies more.' }
+  },
+  surface: {
+    key: 'surface',
+    name: 'Surface defect detector',
+    family: 'industrial',
+    task: 'anomaly',
+    dataset: 'surface',
+    tagline: 'Autoencoder on good parts, defect heatmap',
+    description: 'A convolutional autoencoder trained on good parts only: pool to a bottleneck, upsample back and score a patch by reconstruction error. The per-pixel error is the defect heatmap an inspector can look at, and the window score is its RMS. This fits manufacturing because defect examples are rare — the honest problem is that a model which has never seen a defect may reconstruct one convincingly.',
+    input: [1, 24, 24],
+    inputName: 'part_patch',
+    head: 'heatmap',
+    nodes: [
+      ['conv2d', { filters: 12, kernel: 3 }],
+      ['maxpool2d', { kernel: 2, stride: 2 }],
+      ['conv2d', { filters: 16, kernel: 3 }],
+      ['upsample2d', { factor: 2 }],
+      ['conv2d', { filters: 12, kernel: 3 }],
+      ['conv2d', { filters: 1, kernel: 3, activation: 'linear' }]
+    ],
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
+    budget: { target: 4500, min: 1200, max: 200000 },
+    reference: { params: [100000, 10000000], note: 'MVTec baselines use pretrained feature extractors and patch-distance scoring; a tiny autoencoder trades accuracy for independence.' },
+    notes: [
+      'Reconstruction error is relative to the training distribution. Re-fit the threshold whenever lighting, material or camera changes, and keep a labelled defect set for evaluation even though training does not use one.'
+    ]
+  },
+  hvac: {
+    key: 'hvac',
+    name: 'HVAC fault classifier',
+    family: 'industrial',
+    task: 'multiclass',
+    dataset: 'hvac',
+    tagline: 'Building sensor windows to fault type',
+    description: 'Strided convolutions over eight channels of air-handler telemetry, pooled to a six-way decision. Each fault moves a different subset of channels — a clogged filter raises fan power and duct pressure, low refrigerant changes the supply/return split — so a small temporal model can separate them. Sensor bias is the hard class because it looks like a fault in one channel and nothing anywhere else.',
+    input: [32, 8],
+    inputName: 'sensor_window',
+    head: 'softmax',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 5, stride: 2 }],
+      ['conv1d', { filters: 24, kernel: 3 }],
+      ['globalavgpool1d', {}],
+      ['dense', { units: 6, activation: 'linear' }]
+    ],
+    train: { epochs: 24, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 2000, min: 600, max: 150000 },
+    reference: { params: [100000, 3000000], note: 'Building-analytics products usually start with rules over setpoints and add a classifier where the rules conflict.' }
+  },
+  demand: {
+    key: 'demand',
+    name: 'Demand forecaster with covariates',
+    family: 'retail',
+    task: 'forecast',
+    dataset: 'demand',
+    tagline: 'Sales plus promo and holiday flags to 14 days',
+    description: 'Per-SKU daily sales with promotion and holiday flags as input channels, convolved over the history window and decoded to the next fourteen days in one pass. The flags are only supplied for the past, so the model predicts a baseline and the planner overlays campaigns; supplying future flags is a data-pipeline change, not a model change.',
+    input: [48, 3],
+    inputName: 'history',
+    head: 'linear',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 3 }],
+      ['gru', { units: 24, returnSeq: false }],
+      ['dense', { units: 14, activation: 'linear' }]
+    ],
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, loss: 'huber', huberDelta: 0.2 },
+    budget: { target: 3500, min: 900, max: 150000 },
+    reference: { params: [10000, 5000000], note: 'M5 winners ensemble gradient boosting with hierarchical reconciliation; a two-week SKU horizon is the small end of the same problem.' }
+  },
+  products: {
+    key: 'products',
+    name: 'Product categorizer',
+    family: 'retail',
+    task: 'multiclass',
+    dataset: 'products',
+    tagline: 'Product title to taxonomy node',
+    description: 'Hashed word and character n-grams of a marketplace title into twelve taxonomy nodes. Titles carry brand, size, colour and merchandising suffixes, and new brands appear constantly, so a learned vocabulary is a liability. Catalog tools use this to place a listing before a human has looked at it.',
+    input: [768],
+    inputName: 'title_features',
+    head: 'softmax',
+    nodes: [
+      ['dense', { units: 128 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 64 }],
+      ['dense', { units: 12, activation: 'linear' }]
+    ],
+    train: { epochs: 18, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 105000, min: 20000, max: 600000 },
+    reference: { params: [5000000, 100000000], note: 'Marketplaces use fine-tuned encoders over titles and images; the label contract is what matters for a first version.' }
+  },
+  churn: {
+    key: 'churn',
+    name: 'Churn predictor',
+    family: 'retail',
+    task: 'binary',
+    dataset: 'churn',
+    tagline: 'Usage features to thirty-day cancellation risk',
+    description: 'A compact head over ten usage, support, revenue and satisfaction features. The label is observed thirty days after the features, so the live version of this model always predicts into a labelling delay; split by time when you deploy or the training set will look easier than the problem.',
+    input: [10],
+    inputName: 'account_features',
+    head: 'sigmoid',
+    nodes: [
+      ['dense', { units: 32 }],
+      ['dropout', { rate: 0.2 }],
+      ['dense', { units: 16 }],
+      ['dense', { units: 1, activation: 'linear' }]
+    ],
+    train: { epochs: 24, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 }, decisionThreshold: 0.5 },
+    budget: { target: 1000, min: 300, max: 80000 },
+    reference: { params: [10000, 500000], note: 'Retention teams usually run gradient boosting on the same features and add campaign-uplift modelling on top.' }
+  },
+  columntype: {
+    key: 'columntype',
+    name: 'Column semantic typer',
+    family: 'dataeng',
+    task: 'multiclass',
+    dataset: 'columntype',
+    tagline: "Sample of a column's values to email, phone, date, currency, ID or text",
+    description: 'Six sampled values joined and hashed into character and word n-grams, classified into six semantic types. Data warehouses use it for PII discovery: a column called notes that holds emails is exactly the column a policy engine cannot find by name, and this is how it gets found. Sampling real values is itself a privacy-sensitive operation, so the access path needs the same review as the classifier.',
+    input: [512],
+    inputName: 'sample_features',
+    head: 'softmax',
+    nodes: [
+      ['dense', { units: 64 }],
+      ['dropout', { rate: 0.15 }],
+      ['dense', { units: 32 }],
+      ['dense', { units: 6, activation: 'linear' }]
+    ],
+    train: { epochs: 20, batchSize: 32, optimizer: { name: 'adam', lr: 0.008 } },
+    budget: { target: 36000, min: 8000, max: 300000 },
+    reference: { params: [100000, 5000000], note: 'Catalog vendors combine a value classifier with column names and lineage; the values are what catch mislabelled columns.' }
+  },
+  linkage: {
+    key: 'linkage',
+    name: 'Record linkage matcher',
+    family: 'dataeng',
+    task: 'embedding',
+    dataset: 'linkage',
+    tagline: 'Two records to a match score',
+    description: 'An encoder trained with a group-aware contrastive loss so that two records of the same entity land close together and records of different entities do not. The match score at inference is cosine similarity against a threshold chosen on validation data, and the split is by entity: if two records of one person straddle the boundary, retrieval scores are pure leakage. This is entity resolution for CRMs and dedup tools.',
+    input: [512],
+    inputName: 'record_features',
+    head: 'embedding',
+    nodes: [
+      ['dense', { units: 96 }],
+      ['dropout', { rate: 0.15 }],
+      ['dense', { units: 48, activation: 'linear' }],
+      ['l2normalize', {}]
+    ],
+    train: { epochs: 40, batchSize: 32, optimizer: { name: 'adamw', lr: 0.003, weightDecay: 0.0004 }, temperature: 0.07, loss: 'supcon', decisionThreshold: 0.7 },
+    budget: { target: 55000, min: 12000, max: 400000 },
+    reference: { params: [1000000, 50000000], note: 'Production entity resolution blends rules, blocking keys and pairwise classifiers; an embedding is the retrieval layer.' }
+  },
+  loganomaly: {
+    key: 'loganomaly',
+    name: 'Log anomaly detector',
+    family: 'dataeng',
+    task: 'anomaly',
+    dataset: 'loganomaly',
+    tagline: 'Templated log-line counts to an anomaly score',
+    description: 'A dense autoencoder over a window of per-minute template counts, trained on normal traffic only. Error bursts, a single-template surge, silence and level shifts all reconstruct badly, which is the point: nobody wrote a label for the outage that has not happened yet. Ops teams need the score, the threshold at a fixed false-positive rate and a window of counts they can look at.',
+    input: [32, 8],
+    inputName: 'template_counts',
+    head: 'linear',
+    nodes: [
+      ['flatten', {}],
+      ['dense', { units: 64 }],
+      ['dense', { units: 24 }],
+      ['dense', { units: 64 }],
+      ['dense', { units: 256, activation: 'linear' }],
+      ['reshape', { shape: '32,8' }]
+    ],
+    train: { epochs: 28, batchSize: 32, optimizer: { name: 'adam', lr: 0.006 } },
+    budget: { target: 36000, min: 8000, max: 250000 },
+    reference: { params: [50000, 2000000], note: 'Log-anomaly products usually count templates and use a statistical detector; a learned autoencoder earns its place when templates interact.' }
+  },
+  ecg: {
+    key: 'ecg',
+    name: 'Single-lead ECG beat classifier',
+    family: 'clinical',
+    task: 'multiclass',
+    dataset: 'ecg',
+    tagline: 'Beat window to normal, premature or other',
+    description: 'Two strided convolutions over a single-lead beat window and a three-way head. Premature beats arrive early with a wide QRS and no P wave; the other class collects low-amplitude, inverted and artefact-heavy morphology, which is where the mistakes will be. Real demand from wearables, and a regulated output the moment it guides care — read the regulatory section of the card before using this for anything.',
+    input: [128, 1],
+    inputName: 'ecg_window',
+    head: 'softmax',
+    nodes: [
+      ['conv1d', { filters: 16, kernel: 5 }],
+      ['conv1d', { filters: 24, kernel: 3, stride: 2 }],
+      ['globalavgpool1d', {}],
+      ['dense', { units: 3, activation: 'linear' }]
+    ],
+    train: { epochs: 30, batchSize: 32, optimizer: { name: 'adamw', lr: 0.006, weightDecay: 0.0004 } },
+    budget: { target: 1500, min: 400, max: 150000 },
+    reference: { params: [100000, 10000000], note: 'Clinical ECG classifiers are 1D ResNets or transformers trained on hundreds of thousands of beats; FDA-cleared products are validated per indication.' },
+    compliance: {
+      status: 'regulated',
+      label: 'Software as a Medical Device (SaMD)',
+      notice: 'If this output is used to inform, triage or guide care, it is a medical device. In the EU that means MDR classification, a conformity assessment and a notified body; in the United States, an FDA device pathway with clinical validation and post-market surveillance. Before any clinical use you need a cleared indication for use, patient-level validation on the target population, a documented risk management file (ISO 14971), clinical evidence and a quality system around the training pipeline. A high accuracy on synthetic beats is not clinical evidence, and this preset is a starting point for testing the pipeline, not a cleared product.'
+    },
+    notes: [
+      'Patient-level splitting is mandatory on real data: beats from one patient across training and test inflate every metric.',
+      'The other class mixes genuinely different rhythms. Report per-class recall and the confusion matrix, not just accuracy.'
+    ]
+  }
+});
+
 export const PRESET_FAMILIES = [
   { key: 'text', label: 'Text' },
   { key: 'audio', label: 'Audio' },
   { key: 'vision', label: 'Vision' },
   { key: 'sensor', label: 'Sensors' },
   { key: 'series', label: 'Series' },
+  { key: 'documents', label: 'Documents' },
+  { key: 'finance', label: 'Finance & Risk' },
+  { key: 'security', label: 'Security & Trust' },
+  { key: 'industrial', label: 'Industrial & Maintenance' },
+  { key: 'retail', label: 'Retail & Growth' },
+  { key: 'dataeng', label: 'Data Engineering' },
+  { key: 'clinical', label: 'Clinical Signals' },
   { key: 'wildcard', label: 'Wildcard' }
 ];
 
@@ -630,7 +1285,17 @@ export function buildPresetGraph(preset, overrides) {
     edges,
     output: prev,
     head: src.head,
-    meta: { presetKey: src.key, family: src.family, task: src.task, dataset: src.dataset, tagline: src.tagline }
+    meta: {
+      presetKey: src.key,
+      family: src.family,
+      task: src.task,
+      dataset: src.dataset,
+      tagline: src.tagline,
+      description: src.description || '',
+      reference: src.reference || null,
+      notes: Array.isArray(src.notes) ? src.notes.slice() : [],
+      compliance: src.compliance || null
+    }
   };
 }
 
